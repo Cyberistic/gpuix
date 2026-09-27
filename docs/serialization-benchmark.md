@@ -18,8 +18,9 @@ MessagePack buys 1.24x. Decoding straight into typed ops and sharing styles by
 content bought **4.2x on parse-and-apply, 7.9x fewer allocations, and 5.3x on
 tree memory**, with JSON unchanged and no change to `apply_styles`.
 
-That work has landed. What follows is how it was measured, what was rejected,
-and what is left.
+That work has landed. A later hot/cold split moved sparse event and custom-prop
+maps out of every element, reducing the current 75,054-node tree from **44.5 MB
+to 33.6 MB**. What follows is how these changes were measured and what is left.
 
 ## What shipped
 
@@ -253,15 +254,16 @@ struct CompactElement {
 
 | tree | elements | live heap | per element | effort |
 |---|---:|---:|---:|---|
-| `RetainedTree` (today) | 72 010 | 223.4 MB | 3102 B | — |
+| `RetainedTree` (before style sharing) | 72 010 | 223.4 MB | 3102 B | — |
 | + `Box<StyleDesc>` | 72 010 | 124.6 MB | 1729 B | **one field** |
 | + `Arc<StyleDesc>`, deduplicated | 72 010 | **41.6 MB** | **577 B** | one field plus an intern table |
 | `CompactTree` | 72 010 | 9.2 MB | 127 B | rewrite every reader |
 
-`size_of::<RetainedElement>()` was **1624 B** and is **248 B** with the style
-behind a pointer. The `HashMap` holds the value inline, so that one field
-decides the size of the whole table. The benchmark's own replica prints 240 B
-because it leaves out `search_revision`.
+`size_of::<RetainedElement>()` was **1624 B**, then **248 B** with the style
+behind a pointer, and is now **160 B** after moving sparse events and custom
+props to one optional allocation. The `HashMap` holds the value inline. The
+benchmark's older replica prints 240 B: it keeps both maps inline and leaves
+out `search_revision`.
 
 **5.4x of the available 24.4x costs one field change.** Everything reading
 `Option<&StyleDesc>` keeps working through `Deref`, so `apply_styles` and every
@@ -341,11 +343,12 @@ The only thing given up is 4.95 MB of wire and 3 ms of JS.
 
 ### Cheap, contained, unmeasured
 
-Of the 592 bytes now left per element, none is the style:
+Of the 448 bytes now left per element, none is the style:
 
 - `element_type: String` ► a `u16` tag. Removes a heap block per element
-- `events: HashSet<String>` ► a `u32` bitmask. `HashSet` is 48 B plus heap.
-  Blocked on the custom-element trait signatures, which spell out `HashSet<String>`
+- Event names can become a bitmask. They now cost nothing in eventless nodes,
+  but still use a `HashSet<String>` when present. Custom-element trait
+  signatures still require that type
 - `HashMap<u64, RetainedElement>` ► a dense `Vec`. JS already allocates ids as a
   counter, so the hash buys nothing
 - `Buffer` instead of `String` at the FFI. napi's `String` runs
@@ -374,6 +377,36 @@ every child per frame, so a smaller element does start to matter.
 Also, at 1M elements one `applyBatch` is roughly a 180 MB JSON string held twice.
 That is a separate wall, and no codec fixes it; a mount that large needs chunked
 batches.
+
+## Where a smaller Rust tree helps
+
+The September 2026 `ChatApp` fixture has 75,054 retained elements. Only 3,064
+have event listeners and 7,001 have custom props (7,002 nodes have either).
+Keeping both maps behind one
+optional box reduces `RetainedElement` from 248 to 160 bytes. The counting
+allocator measures **44.5 MB before and 33.6 MB after**; the mount's median
+parse-and-apply time was 40.6 ms before and 34.9 ms after on this machine.
+
+The experimental compact replica uses **10.0 MB**, but it does not implement
+every production field or verify every value. Its remaining 23.6 MB potential
+saving is a direction, not a promised result from replacing the production tree.
+
+The same 350,000-file Disktree scan mounts **412** Rust elements: its file tree
+stays in Bun. Extrapolating the chat's 448 bytes per element gives about
+**185 KB**, not a direct Disktree heap measurement. Even an ideal zero-byte
+tree could not remove the roughly 100 MB process-footprint gap with the
+standalone Rust app.
+
+For large mounted trees, keep structural IDs, parent links, and revisions in a
+compact arena; move infrequent events and custom props to side tables. Recycle
+slots only with stable ID mapping so a React remount cannot revive a deleted
+node. A full struct-of-arrays split is not automatically smaller or faster:
+GPUI's build path reads several fields of each visible node together. See the
+[Rust Performance Book on type sizes](https://nnethercote.github.io/perf-book/type-sizes.html)
+and [Data-Oriented Design on structs of arrays](https://www.dataorienteddesign.com/dodbook/node9.html).
+For live allocation sites outside `RetainedTree`, profile a standalone test
+binary with [dhat-rs](https://github.com/nnethercote/dhat-rs); the counting
+allocator above measures bytes, not allocation call stacks.
 
 ## Known gaps in the benchmark itself
 

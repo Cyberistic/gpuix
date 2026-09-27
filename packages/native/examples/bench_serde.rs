@@ -554,9 +554,9 @@ impl<'de, S: Deserialize<'de>> Deserialize<'de> for Op<'de, S> {
 // inline, so every element paid the full style size even when it had no style.
 // It now holds an `Arc<StyleDesc>`; the row below measures the version this
 // benchmark argued for.
-// Add `String` element types, a `HashSet<String>` of event names and a
-// `HashMap<String, Value>` of custom props and one node costs more than a
-// kilobyte before it holds any content.
+// The shipped tree now boxes event and custom-prop maps only for nodes that
+// need them. This compact prototype goes further, but does not model every
+// production field or mutation.
 //
 // Here the node is a fixed 48-byte record in a dense `Vec`, indexed by the id
 // JS already allocates as a dense counter. Children are a sibling list, so
@@ -791,7 +791,7 @@ fn build_fat_tree(bytes: &[u8]) -> RetainedTree {
     tree
 }
 
-/// `RetainedElement` with one field changed: the style moved behind a pointer.
+/// The pre-extras `RetainedElement` shape with the style behind a pointer.
 ///
 /// This is the cheapest possible step. Everything that reads
 /// `Option<&StyleDesc>` keeps working through `Deref`, so `apply_styles` and
@@ -1084,7 +1084,7 @@ fn main() {
         std::mem::size_of::<gpuix_native::retained_tree::RetainedElement>()
     );
     println!(
-        "| bench replica + `Arc<StyleDesc>` | {} B | the same shape, measured standalone |",
+        "| pre-extras replica + `Arc<StyleDesc>` | {} B | event and custom-prop maps inline |",
         std::mem::size_of::<PointerStyleElement<std::sync::Arc<StyleDesc>>>()
     );
     println!(
@@ -1211,13 +1211,13 @@ fn main() {
         fat_heap.live as usize / fat_elements.max(1),
     );
     println!(
-        "| + `Box<StyleDesc>` | {} | {:.1} MB | {} B | one field, no sharing |",
+        "| pre-extras + `Box<StyleDesc>` | {} | {:.1} MB | {} B | one field, no sharing |",
         boxed_elements,
         boxed_heap.live as f64 / 1e6,
         boxed_heap.live.max(0) as usize / boxed_elements.max(1),
     );
     println!(
-        "| + `Arc<StyleDesc>`, deduplicated | {} | {:.1} MB | {} B | one field plus an intern table |",
+        "| pre-extras + `Arc<StyleDesc>`, deduplicated | {} | {:.1} MB | {} B | one field plus an intern table |",
         shared_elements,
         shared_heap.live as f64 / 1e6,
         shared_heap.live.max(0) as usize / shared_elements.max(1),

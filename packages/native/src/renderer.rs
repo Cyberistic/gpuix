@@ -3471,7 +3471,7 @@ fn emit_motion_settled(
         let Some(element) = tree.elements.get(&id) else {
             continue;
         };
-        if !element.events.contains("motionComplete") {
+        if !element.events().contains("motionComplete") {
             continue;
         }
         emit_event_full(callback, id, "motionComplete", |payload| {
@@ -3493,7 +3493,7 @@ fn sync_motion_states(
         let Some(source) = tree
             .elements
             .get(&id)
-            .and_then(|element| element.custom_props.get("motion"))
+            .and_then(|element| element.custom_props().get("motion"))
         else {
             continue;
         };
@@ -3914,7 +3914,7 @@ impl GpuixView {
             inherited.highlight = tree
                 .elements
                 .get(&declaration)
-                .and_then(|element| element.custom_props.get("highlight"))
+                .and_then(|element| element.custom_props().get("highlight"))
                 .and_then(|value| {
                     resolve_highlight(
                         &mut self.highlights,
@@ -4173,7 +4173,7 @@ fn json_usize(value: &serde_json::Value) -> Option<usize> {
 
 fn window_start_from_element(element: &crate::retained_tree::RetainedElement) -> usize {
     element
-        .custom_props
+        .custom_props()
         .get("windowStart")
         .and_then(json_usize)
         .unwrap_or(0)
@@ -4190,7 +4190,7 @@ struct VirtualListConfig {
 
 impl VirtualListConfig {
     fn from_element(element: &crate::retained_tree::RetainedElement) -> Self {
-        let prop = |key: &str| element.custom_props.get(key);
+        let prop = |key: &str| element.custom_props().get(key);
         let alignment = match prop("alignment").and_then(serde_json::Value::as_str) {
             Some("bottom") => gpui::ListAlignment::Bottom,
             _ => gpui::ListAlignment::Top,
@@ -4700,7 +4700,7 @@ impl GpuixView {
         }
         let tab_index = |element: &crate::retained_tree::RetainedElement| {
             element
-                .custom_props
+                .custom_props()
                 .get("tabIndex")
                 .and_then(|value| value.as_i64())
                 .and_then(|index| isize::try_from(index).ok())
@@ -4708,10 +4708,10 @@ impl GpuixView {
         let needs_focus = |element: &crate::retained_tree::RetainedElement| {
             matches!(element.element_type.as_str(), "input" | "textarea")
                 || tab_index(element).is_some()
-                || element.events.contains("keyDown")
-                || element.events.contains("keyUp")
-                || element.events.contains("focus")
-                || element.events.contains("blur")
+                || element.events().contains("keyDown")
+                || element.events().contains("keyUp")
+                || element.events().contains("focus")
+                || element.events().contains("blur")
         };
         // Create handles for elements that need focus but don't have one yet.
         for (&id, element) in &tree.elements {
@@ -4754,14 +4754,14 @@ impl GpuixView {
         self.focus_subscriptions.retain(|(id, event), _| {
             tree.elements
                 .get(id)
-                .is_some_and(|element| element.events.contains(event))
+                .is_some_and(|element| element.events().contains(event))
         });
         for (&id, element) in &tree.elements {
             let Some(handle) = self.focus_handles.get(&id).cloned() else {
                 continue;
             };
             let focus_key = (id, "focus".to_string());
-            if element.events.contains("focus")
+            if element.events().contains("focus")
                 && !self.focus_subscriptions.contains_key(&focus_key)
             {
                 let callback = callback.clone();
@@ -4771,7 +4771,8 @@ impl GpuixView {
                 self.focus_subscriptions.insert(focus_key, subscription);
             }
             let blur_key = (id, "blur".to_string());
-            if element.events.contains("blur") && !self.focus_subscriptions.contains_key(&blur_key)
+            if element.events().contains("blur")
+                && !self.focus_subscriptions.contains_key(&blur_key)
             {
                 let callback = callback.clone();
                 let subscription = cx.on_blur(&handle, window, move |_this, _window, _cx| {
@@ -4851,7 +4852,7 @@ impl gpui::Render for GpuixView {
         self.highlights.retain(|id, _| {
             tree.elements
                 .get(id)
-                .is_some_and(|element| element.custom_props.contains_key("highlight"))
+                .is_some_and(|element| element.custom_props().contains_key("highlight"))
         });
         let mut highlight_events = Vec::new();
         let keyboard_focus = self.keyboard_focus_path(&tree, window, cx);
@@ -4967,7 +4968,7 @@ pub(crate) fn build_element(
         return gpui::Empty.into_any_element();
     };
 
-    let animated_style = if element.custom_props.contains_key("motion") {
+    let animated_style = if element.custom_props().contains_key("motion") {
         ctx.motion_states
             .get(&id)
             .and_then(|state| state.visible_style(ctx.now))
@@ -4992,8 +4993,8 @@ pub(crate) fn build_element(
     // A `highlight` here replaces any ancestor's: the nearest declaration wins,
     // and `GroupList::collect` skips nested declarations so an ancestor never
     // resolves or counts matches that will not paint.
-    if let Some(value) = element.custom_props.get("highlight") {
-        let has_listener = element.events.contains("highlight");
+    if let Some(value) = element.custom_props().get("highlight") {
+        let has_listener = element.events().contains("highlight");
         let resolved = resolve_highlight(
             ctx.highlights,
             ctx.tree,
@@ -5034,7 +5035,7 @@ pub(crate) fn build_element(
             let inherited = ctx.inherited.clone();
             let render_ctx = CustomRenderContext {
                 id,
-                events: &element.events,
+                events: element.events(),
                 event_callback: ctx.event_callback,
                 focus_handle: ctx.focus_handles.get(&id),
                 keyboard_focus: ctx.keyboard_focus.clone(),
@@ -5044,10 +5045,10 @@ pub(crate) fn build_element(
                 selectable: inherited.selectable,
                 selection_wash: inherited.selection_wash,
                 highlight_set: inherited.highlight.clone(),
-                props: &element.custom_props,
+                props: element.custom_props(),
             };
             ctx.custom_registry
-                .render(custom_type, &element.custom_props, render_ctx, window, cx)
+                .render(custom_type, element.custom_props(), render_ctx, window, cx)
         }
     };
 
@@ -5162,7 +5163,7 @@ fn build_virtual_list(
         list_state.scroll_to(offset);
     }
 
-    if element.events.contains("visibleRange") {
+    if element.events().contains("visibleRange") {
         let callback = ctx.event_callback.clone();
         let list_id = element.id;
         list_state.set_scroll_handler(move |event, _window, _cx| {
@@ -5196,7 +5197,7 @@ fn build_virtual_list(
     if let Some(style) = element.style.as_deref() {
         list = apply_styles(list, style);
     }
-    apply_accessibility(list, &element.custom_props, None).into_any_element()
+    apply_accessibility(list, element.custom_props(), None).into_any_element()
 }
 
 fn unmounted_virtual_row(height: f32) -> gpui::AnyElement {
@@ -5351,7 +5352,7 @@ pub(crate) fn build_host_container(
         el = apply_focus_visible(el, element.id, style, ctx.keyboard_focus.as_deref());
     }
     if let Some(tab_index) = element
-        .custom_props
+        .custom_props()
         .get("tabIndex")
         .and_then(|value| value.as_i64())
         .and_then(|index| isize::try_from(index).ok())
@@ -5365,8 +5366,8 @@ pub(crate) fn build_host_container(
     // hear the same string twice.
     let is_text_host = element.element_type == "text" && element.content.is_none();
     let default_role = is_text_host.then_some(gpui::Role::Label);
-    el = apply_accessibility(el, &element.custom_props, default_role);
-    if is_text_host && element.custom_props.get("aria-valuetext").is_none() {
+    el = apply_accessibility(el, element.custom_props(), default_role);
+    if is_text_host && element.custom_props().get("aria-valuetext").is_none() {
         if let Some(content) = joined_text_content(ctx.tree, element) {
             el = el.aria_value(content);
         }
@@ -5376,7 +5377,7 @@ pub(crate) fn build_host_container(
     // Some events (on_hover, on_aux_click) require a stateful element (.id()),
     // which we already set above. Others (on_mouse_down, on_key_down) work
     // on any InteractiveElement.
-    if element.events.contains("click") {
+    if element.events().contains("click") {
         let id = element.id;
         let callback = ctx.event_callback.clone();
         // GPUI's higher-level on_click gesture is not finalized by the
@@ -5393,10 +5394,10 @@ pub(crate) fn build_host_container(
                 p.is_right_click = Some(false);
             });
         });
-        el = apply_a11y_click(el, &element.events, id, ctx.event_callback);
+        el = apply_a11y_click(el, element.events(), id, ctx.event_callback);
     }
 
-    for event_type in &element.events {
+    for event_type in element.events() {
         let id = element.id;
         let callback = ctx.event_callback.clone();
         match event_type.as_str() {
@@ -5476,8 +5477,8 @@ pub(crate) fn build_host_container(
             "mouseEnter" | "mouseLeave" => {
                 // Only wire once even if both mouseEnter and mouseLeave are registered.
                 // Check if we already wired on_hover via the other event.
-                let has_enter = element.events.contains("mouseEnter");
-                let has_leave = element.events.contains("mouseLeave");
+                let has_enter = element.events().contains("mouseEnter");
+                let has_leave = element.events().contains("mouseLeave");
                 // Wire on first encounter (mouseEnter sorts before mouseLeave).
                 if event_type.as_str() == "mouseEnter" || !has_enter {
                     let callback_enter = if has_enter {
@@ -5585,7 +5586,7 @@ pub(crate) fn build_host_container(
         }
     }
 
-    if element.events.contains("mouseDown") && element.events.contains("mouseMove") {
+    if element.events().contains("mouseDown") && element.events().contains("mouseMove") {
         el = el.capture_pointer();
     }
 
@@ -7069,9 +7070,9 @@ mod batch_tests {
         let mut out = format!("root={:?}\n", tree.root_id);
         for id in ids {
             let element = &tree.elements[&id];
-            let mut events: Vec<_> = element.events.iter().cloned().collect();
+            let mut events: Vec<_> = element.events().iter().cloned().collect();
             events.sort();
-            let mut props: Vec<_> = element.custom_props.iter().collect();
+            let mut props: Vec<_> = element.custom_props().iter().collect();
             props.sort_by(|(a, _), (b, _)| a.cmp(b));
             out += &format!(
                 "{id} type={} text={:?} style={:?} children={:?} parent={:?} events={events:?} props={props:?} rev={}/{}\n",
@@ -7197,7 +7198,7 @@ mod batch_tests {
                 format!(r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#);
             apply(&mut tree, &json).expect("boolean handler state");
             assert_eq!(
-                tree.elements[&1].events.contains("click"),
+                tree.elements[&1].events().contains("click"),
                 expected,
                 "hasHandler {payload}"
             );

@@ -8,7 +8,7 @@
 /// passes them as numbers across napi (no string allocation).
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::style::StyleDesc;
 
@@ -18,7 +18,7 @@ pub struct RetainedElement {
     /// Shared, not owned. `StyleDesc` is ~1.4 KB, and holding it inline made an
     /// unstyled element pay for a style it does not have: `RetainedElement` was
     /// 1624 bytes, and the `HashMap` stores values inline, so the whole table
-    /// was that wide. Behind an `Arc` the record is 248 bytes.
+    /// was that wide. Behind an `Arc` it was 248 bytes; cold metadata makes it 160.
     ///
     /// The pointer is also shared between every element that declared the same
     /// style. A 10k-turn chat has 59 320 `setStyle` ops and 90 distinct styles.
@@ -27,12 +27,10 @@ pub struct RetainedElement {
     /// through it; `Arc` has no `DerefMut`, so the compiler enforces that.
     pub style: Option<Arc<StyleDesc>>,
     pub content: Option<String>,
-    pub events: HashSet<String>,
     pub children: Vec<u64>,
     pub parent: Option<u64>,
-    /// Props for custom elements (input, editor, diff, etc.).
-    /// Keyed by prop name, values are JSON. Ignored for "div" and "text".
-    pub custom_props: HashMap<String, serde_json::Value>,
+    /// Most host nodes have neither listeners nor custom props.
+    extras: Option<Box<ElementExtras>>,
     /// Take keyboard focus the first time this element gets a focus handle.
     /// Without it an `<input>` is dead until the user clicks it.
     pub auto_focus: bool,
@@ -51,6 +49,14 @@ pub struct RetainedElement {
     pub test_id: Option<String>,
 }
 
+#[derive(Default)]
+struct ElementExtras {
+    events: HashSet<String>,
+    custom_props: HashMap<String, serde_json::Value>,
+}
+
+static EMPTY_EXTRAS: LazyLock<ElementExtras> = LazyLock::new(ElementExtras::default);
+
 impl RetainedElement {
     pub fn new(id: u64, element_type: String, revision: u64) -> Self {
         Self {
@@ -58,14 +64,35 @@ impl RetainedElement {
             element_type,
             style: None,
             content: None,
-            events: HashSet::new(),
             children: Vec::new(),
             parent: None,
+            extras: None,
             auto_focus: false,
             subtree_revision: revision,
             search_revision: revision,
             test_id: None,
-            custom_props: HashMap::new(),
+        }
+    }
+
+    pub fn events(&self) -> &HashSet<String> {
+        &self.extras.as_deref().unwrap_or(&EMPTY_EXTRAS).events
+    }
+
+    pub fn custom_props(&self) -> &HashMap<String, serde_json::Value> {
+        &self.extras.as_deref().unwrap_or(&EMPTY_EXTRAS).custom_props
+    }
+
+    fn extras_mut(&mut self) -> &mut ElementExtras {
+        self.extras.get_or_insert_with(Default::default)
+    }
+
+    fn release_empty_extras(&mut self) {
+        if self
+            .extras
+            .as_ref()
+            .is_some_and(|extras| extras.events.is_empty() && extras.custom_props.is_empty())
+        {
+            self.extras = None;
         }
     }
 }
@@ -365,9 +392,10 @@ impl RetainedTree {
     pub fn set_event_listener(&mut self, id: u64, event_type: String, has_handler: bool) {
         if let Some(element) = self.elements.get_mut(&id) {
             if has_handler {
-                element.events.insert(event_type);
-            } else {
-                element.events.remove(&event_type);
+                element.extras_mut().events.insert(event_type);
+            } else if let Some(extras) = element.extras.as_mut() {
+                extras.events.remove(&event_type);
+                element.release_empty_extras();
             }
         }
     }
@@ -385,7 +413,7 @@ impl RetainedTree {
         let was_declaration = self
             .elements
             .get(&id)
-            .is_some_and(|element| element.custom_props.contains_key("highlight"));
+            .is_some_and(|element| element.custom_props().contains_key("highlight"));
         if let Some(element) = self.elements.get_mut(&id) {
             // `autoFocus` applies to every element type, so it is lifted out of
             // the custom-prop map that only custom elements read.
@@ -398,12 +426,14 @@ impl RetainedTree {
                 return;
             }
             if value.is_null() {
-                changed = element.custom_props.remove(&key).is_some();
-            } else {
-                if element.custom_props.get(&key) != Some(&value) {
-                    element.custom_props.insert(key, value);
-                    changed = true;
-                }
+                changed = element
+                    .extras
+                    .as_mut()
+                    .is_some_and(|extras| extras.custom_props.remove(&key).is_some());
+                element.release_empty_extras();
+            } else if element.custom_props().get(&key) != Some(&value) {
+                element.extras_mut().custom_props.insert(key, value);
+                changed = true;
             }
         }
         if !changed {
@@ -413,7 +443,7 @@ impl RetainedTree {
             if self
                 .elements
                 .get(&id)
-                .is_some_and(|element| element.custom_props.contains_key("motion"))
+                .is_some_and(|element| element.custom_props().contains_key("motion"))
             {
                 self.motion_ids.insert(id);
             } else {
@@ -424,7 +454,7 @@ impl RetainedTree {
         let is_declaration = self
             .elements
             .get(&id)
-            .is_some_and(|element| element.custom_props.contains_key("highlight"));
+            .is_some_and(|element| element.custom_props().contains_key("highlight"));
         if is_highlight && was_declaration != is_declaration {
             // Only the ancestors: `GroupList::collect` skips a nested
             // declaration's subtree, so which subtrees exist changed for them.
@@ -437,7 +467,7 @@ impl RetainedTree {
 
     /// Read a custom prop value from an element.
     pub fn get_custom_prop(&self, id: u64, key: &str) -> Option<&serde_json::Value> {
-        self.elements.get(&id)?.custom_props.get(key)
+        self.elements.get(&id)?.custom_props().get(key)
     }
 
     pub fn to_json(
@@ -529,15 +559,15 @@ fn element_to_json(
             }
         }
 
-        if !element.events.is_empty() {
-            let mut events: Vec<String> = element.events.iter().cloned().collect();
+        if !element.events().is_empty() {
+            let mut events: Vec<String> = element.events().iter().cloned().collect();
             events.sort();
             obj.insert("events".to_string(), serde_json::json!(events));
         }
 
-        if !element.custom_props.is_empty() {
+        if !element.custom_props().is_empty() {
             let custom: serde_json::Map<String, serde_json::Value> = element
-                .custom_props
+                .custom_props()
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
@@ -837,6 +867,25 @@ mod tests {
         let after = tree.elements[&1].search_revision;
         tree.destroy_element(3);
         assert!(tree.elements[&1].search_revision > after);
+    }
+
+    #[test]
+    fn cold_event_and_prop_storage_is_released_when_empty() {
+        let mut tree = tree_with_child();
+        assert!(tree.elements[&1].extras.is_none());
+
+        tree.set_event_listener(1, "click".to_string(), true);
+        tree.set_custom_prop(1, "aria-label".to_string(), serde_json::json!("button"));
+        assert!(tree.elements[&1].events().contains("click"));
+        assert_eq!(
+            tree.get_custom_prop(1, "aria-label"),
+            Some(&serde_json::json!("button"))
+        );
+
+        tree.set_event_listener(1, "click".to_string(), false);
+        assert!(tree.elements[&1].extras.is_some());
+        tree.set_custom_prop(1, "aria-label".to_string(), serde_json::Value::Null);
+        assert!(tree.elements[&1].extras.is_none());
     }
 
     #[test]

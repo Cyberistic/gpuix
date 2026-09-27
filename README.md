@@ -1546,6 +1546,14 @@ child list is never shifted twice.
 
 The children form still creates every React child, so a 10,000-row `turns.map` is slow to mount. Pass `itemCount` and `windowStart` and render only that slice to mount a window too. Collections with millions of rows still need application-level paging or a data-owning native element.
 
+React releases temporary child-placement lists after a subtree mounts. A
+5,000-turn chat retained 45.6 MiB of JS heap instead of 47.7 MiB; windowed
+lists avoid those host nodes altogether.
+
+Native host elements keep their event and custom-prop maps only when needed.
+On a 75,000-element chat, the retained Rust tree used 33.6 MB instead of
+44.5 MB. This changes memory use, not the event or prop API.
+
 ### Keep scroll fast
 
 A wheel event notifies the window view. GPUI then rebuilds the **visible**
