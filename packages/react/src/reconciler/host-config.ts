@@ -38,7 +38,7 @@ type HostNode = Instance | TextInstance
 
 interface HostNodeState {
   container: Container
-  initialChildren: HostNode[]
+  initialChildren?: HostNode[]
   mounted: boolean
 }
 
@@ -198,11 +198,13 @@ function materialize(node: HostNode): HostNodeState {
   }
   state.mounted = true
 
-  for (const child of state.initialChildren) {
-    materialize(child)
-    renderer.appendChild(node.id, child.id)
+  if (state.initialChildren) {
+    for (const child of state.initialChildren) {
+      materialize(child)
+      renderer.appendChild(node.id, child.id)
+    }
+    state.initialChildren = undefined
   }
-  state.initialChildren.length = 0
   return state
 }
 
@@ -229,7 +231,6 @@ export const hostConfig = {
     }
     hostNodeStates.set(instance, {
       container: rootContainerInstance,
-      initialChildren: [],
       mounted: false,
     })
     return instance
@@ -316,7 +317,6 @@ export const hostConfig = {
     }
     hostNodeStates.set(instance, {
       container: rootContainerInstance,
-      initialChildren: [],
       mounted: false,
     })
     return instance
@@ -379,7 +379,9 @@ export const hostConfig = {
   },
 
   appendInitialChild(parent: Instance, child: Instance | TextInstance): void {
-    stateFor(parent).initialChildren.push(child)
+    const state = stateFor(parent)
+    state.initialChildren ??= []
+    state.initialChildren.push(child)
   },
 
   hideInstance(instance: Instance): void {
