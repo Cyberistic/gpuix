@@ -46,6 +46,7 @@ describeNative('disktree', () => {
     const store = createDisktreeStore(root)
     await store.rescan()
     const tree = store.get().tree!
+    if (!tree.dir) throw new Error('Expected scanned folder')
     expect(tree.children.map((child) => `${child.name} ${child.category} ${child.reclaim}`)).toMatchInlineSnapshot(`
       [
         "node_modules cache reinstallable",

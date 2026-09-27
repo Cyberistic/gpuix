@@ -39,7 +39,8 @@ Runs on Node 20+ or Bun (`bunx disktree`). No Electron, no web view: GPUI paints
 A pool of up to four worker threads walks the tree with synchronous `lstat`, one volume
 only, hardlinks counted once. Each directory keeps its 12 largest files as
 tiles and folds the rest into one "N smaller files" tile, which keeps a
-full-disk scan in memory.
+full-disk scan in memory. File tiles do not carry directory child lists or
+directory-only scan state, so large scans retain fewer objects.
 
 `/System/Volumes/Data` is skipped when scanning `/`, since it mirrors `/Users`
 and `/Applications`.

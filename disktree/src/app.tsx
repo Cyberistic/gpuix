@@ -1067,7 +1067,7 @@ export function DisktreeApp({ store, width, height }: DisktreeAppProps) {
                 {humanBytes(tree?.bytes ?? state.progress.bytes)}
               </text>
               <text style={{ fontSize: TEXT.body, color: INK_2 }}>
-                {`· ${humanCount(tree?.files ?? state.progress.files)} files · ${humanCount(tree?.dirs ?? state.progress.dirs)} dirs`}
+                {`· ${humanCount(tree?.files ?? state.progress.files)} files · ${humanCount(tree?.dir ? tree.dirs : state.progress.dirs)} dirs`}
               </text>
               {state.progress.errors > 0 ? (
                 <text style={{ fontSize: TEXT.body, color: HIGHLIGHT }}>{`· ${humanCount(state.progress.errors)} unreadable`}</text>

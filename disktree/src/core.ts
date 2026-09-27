@@ -41,24 +41,33 @@ export type Reclaim =
   | 'trash'
   | 'temporary'
 
-export interface TreeNode {
+interface NodeBase {
   name: string
-  dir: boolean
   /** Disk usage: what comes back when it is deleted. */
   bytes: number
   /** What `ls -l` shows. */
   apparent: number
   /** 1 for a file, the count for a folded group of small files. */
   files: number
-  dirs: number
   /** Newest write inside, in ms. 0 when unknown. */
   modified: number
-  /** Largest first by disk usage. */
-  children: TreeNode[]
   category: Category
   reclaim: Reclaim | null
+}
+
+export interface FolderNode extends NodeBase {
+  dir: true
+  dirs: number
+  /** Largest first by disk usage. */
+  children: TreeNode[]
   unreadable: boolean
 }
+
+export interface FileNode extends NodeBase {
+  dir: false
+}
+
+export type TreeNode = FolderNode | FileNode
 
 export type Metric = 'bytes' | 'apparent' | 'files'
 
@@ -70,7 +79,7 @@ export function valueOf(node: TreeNode, metric: Metric): number {
 export function resolve(root: TreeNode, crumbs: readonly number[]): TreeNode | undefined {
   let node: TreeNode | undefined = root
   for (const index of crumbs) {
-    node = node?.children[index]
+    node = node?.dir ? node.children[index] : undefined
     if (!node) return undefined
   }
   return node
@@ -80,6 +89,7 @@ export function resolveChain(root: TreeNode, crumbs: readonly number[]): TreeNod
   const chain = [root]
   let node = root
   for (const index of crumbs) {
+    if (!node.dir) break
     const next = node.children[index]
     if (!next) break
     chain.push(next)
@@ -107,24 +117,33 @@ export interface ScanOptions {
 // `/`, and the same volume is also mounted here. Walking both counts it twice.
 const MIRRORS = process.platform === 'darwin' ? ['/System/Volumes/Data'] : []
 
-function leaf(name: string, bytes: number, apparent: number, modified: number, files = 1): TreeNode {
+function leaf(name: string, bytes: number, apparent: number, modified: number, files = 1): FileNode {
   return {
     name,
     dir: false,
     bytes,
     apparent,
     files,
-    dirs: 0,
     modified,
+    category: 'other',
+    reclaim: null,
+  }
+}
+
+function folder(name: string): FolderNode {
+  return {
+    name,
+    dir: true,
+    bytes: 0,
+    apparent: 0,
+    files: 0,
+    dirs: 0,
+    modified: 0,
     children: [],
     category: 'other',
     reclaim: null,
     unreadable: false,
   }
-}
-
-function folder(name: string): TreeNode {
-  return { ...leaf(name, 0, 0, 0, 0), dir: true }
 }
 
 /**
@@ -142,7 +161,7 @@ export async function scan(root: string, options: ScanOptions): Promise<TreeNode
 
   const request = { includeHidden: options.includeHidden, devices: [rootStat.dev], skip: MIRRORS }
   // Directories listed by a parent, waiting for their own record.
-  const open = new Map<string, TreeNode>([[root, tree]])
+  const open = new Map<string, FolderNode>([[root, tree]])
   const queue: string[] = [root]
   const seen = new Set<string>()
   const size = Math.max(2, Math.min(4, availableParallelism() - 2))
@@ -241,7 +260,7 @@ export function aggregate(node: TreeNode): void {
     files += child.files
     dirs += child.dir ? child.dirs + 1 : 0
     modified = Math.max(modified, child.modified)
-    unreadable ||= child.unreadable
+    if (child.dir) unreadable ||= child.unreadable
   }
   Object.assign(node, { files, dirs, bytes, apparent, modified, unreadable })
   node.children.sort((left, right) => right.bytes - left.bytes)
@@ -340,6 +359,7 @@ function nameCategory(node: TreeNode): Category | undefined {
 function dominantCategory(node: TreeNode): Category | undefined {
   let current: TreeNode | undefined = node
   for (let level = 0; level < 3 && current; level++) {
+    if (!current.dir) break
     for (const child of current.children) {
       if (!child.dir) continue
       const category = nameCategory(child)
@@ -354,6 +374,7 @@ function dominantCategory(node: TreeNode): Category | undefined {
 export function classify(root: TreeNode): void {
   root.category = 'other'
   root.reclaim = null
+  if (!root.dir) return
   const has = (siblings: TreeNode[]) => (wanted: string) => siblings.some((sibling) => sibling.name === wanted)
   for (const child of root.children) {
     const category = nameCategory(child) ?? dominantCategory(child) ?? 'other'
@@ -363,6 +384,7 @@ export function classify(root: TreeNode): void {
   function below(node: TreeNode, category: Category, reclaim: Reclaim | null) {
     node.category = category
     node.reclaim = reclaim
+    if (!node.dir) return
     const siblings = has(node.children)
     for (const child of node.children) {
       if (!child.dir) {
@@ -436,7 +458,7 @@ export function layout(
   return out
 
   function place(parent: TreeNode, area: Rect, depth: number, crumbs: number[]) {
-    if (!parent.children.length || area.w <= 0 || area.h <= 0) return
+    if (!parent.dir || !parent.children.length || area.w <= 0 || area.h <= 0) return
     const ranked = parent.children
       .map((child, index) => ({ index, value: valueOf(child, metric) }))
       .filter((entry) => entry.value > 0)
@@ -568,7 +590,7 @@ export function worthALook(root: TreeNode, now: number, limit: number): Candidat
   // 64 MiB on a real disk; a small folder still gets a list.
   const minBytes = Math.min(64 * 1024 * 1024, Math.max(1, root.bytes * 0.01))
   const found: Candidate[] = []
-  root.children.forEach((child, index) => visit(child, [index]))
+  if (root.dir) root.children.forEach((child, index) => visit(child, [index]))
   return found
     .filter((candidate) => candidate.bytes >= minBytes)
     .sort((left, right) => right.bytes - left.bytes)
