@@ -5919,6 +5919,25 @@ fn scrollbar_overlay(handle: gpui::ScrollHandle, thumbs: ThumbStyle) -> gpui::An
     .into_any_element()
 }
 
+/// How far a virtual list can scroll and has, for `paint_scrollbars`. Rows the
+/// list has not measured count as the average measured row, not as the single
+/// `estimatedItemHeight`, which a thread of tall rows would otherwise miss by
+/// a few times. Before any row is measured the list's own totals stand.
+fn list_scroll_extent(
+    state: &gpui::ListState,
+) -> (gpui::Point<gpui::Pixels>, gpui::Point<gpui::Pixels>) {
+    match state.averaged_scroll_extent() {
+        Some((max, offset)) => (
+            gpui::point(gpui::px(0.0), max),
+            gpui::point(gpui::px(0.0), -offset),
+        ),
+        None => (
+            state.max_offset_for_scrollbar(),
+            state.scroll_px_offset_for_scrollbar(),
+        ),
+    }
+}
+
 /// The thumb of the virtual list inside a container, painted over the
 /// container's padding box. See `scrollbar_overlay`; a list is not shifted by
 /// its scroll offset, so the viewport is the box itself.
@@ -5928,14 +5947,8 @@ fn list_scrollbar_overlay(state: gpui::ListState, thumbs: ThumbStyle) -> gpui::A
     gpui::canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
-            paint_scrollbars(
-                window,
-                bounds.origin,
-                bounds.size,
-                state.max_offset_for_scrollbar(),
-                state.scroll_px_offset_for_scrollbar(),
-                thumbs,
-            );
+            let (max, offset) = list_scroll_extent(&state);
+            paint_scrollbars(window, bounds.origin, bounds.size, max, offset, thumbs);
         },
     )
     .absolute()
@@ -6011,14 +6024,8 @@ impl gpui::Element for ListWithScrollbar {
         cx: &mut gpui::App,
     ) {
         self.list.paint(window, cx);
-        paint_scrollbars(
-            window,
-            bounds.origin,
-            bounds.size,
-            self.state.max_offset_for_scrollbar(),
-            self.state.scroll_px_offset_for_scrollbar(),
-            self.thumbs,
-        );
+        let (max, offset) = list_scroll_extent(&self.state);
+        paint_scrollbars(window, bounds.origin, bounds.size, max, offset, self.thumbs);
     }
 }
 
@@ -6039,7 +6046,10 @@ mod scrollbar_tests {
         let (_, length) = scrollbar_thumb(100.0, 200.0, 0.0).unwrap();
         let (start, same_length) = scrollbar_thumb(100.0, 200.0, -200.0).unwrap();
         assert_eq!(length, same_length);
-        assert!((start + length - 100.0).abs() < 0.01, "ends at the end of the track");
+        assert!(
+            (start + length - 100.0).abs() < 0.01,
+            "ends at the end of the track"
+        );
         let (halfway, _) = scrollbar_thumb(100.0, 200.0, -100.0).unwrap();
         assert!((halfway - (100.0 - length) / 2.0).abs() < 0.01);
     }
@@ -6060,7 +6070,11 @@ mod scrollbar_tests {
     #[test]
     fn content_that_fits_has_no_thumb() {
         assert_eq!(scrollbar_thumb(100.0, 0.0, 0.0), None);
-        assert_eq!(scrollbar_thumb(100.0, 0.5, 0.0), None, "a fraction of a pixel is rounding");
+        assert_eq!(
+            scrollbar_thumb(100.0, 0.5, 0.0),
+            None,
+            "a fraction of a pixel is rounding"
+        );
         assert_eq!(scrollbar_thumb(0.0, 200.0, 0.0), None);
     }
 }

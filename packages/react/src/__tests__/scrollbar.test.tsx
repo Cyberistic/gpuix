@@ -183,6 +183,45 @@ describeNative("scrollbarColor on a <virtual-list>", () => {
   it("paints nothing without a colour", () => {
     expect(shootList(undefined, null)).toEqual([])
   })
+
+  it("sizes the rows it has not measured from the ones it has, not from the estimate", () => {
+    const { render, renderer, unmount } = createTestRoot()
+    try {
+      // 20 rows of 200px in a 400px list is 4000px, so the thumb is 40px. With only
+      // the 40px estimate for the rows out of view it would be 143px.
+      render(
+        <virtual-list
+          testId="list"
+          overdraw={0}
+          estimatedItemHeight={40}
+          style={{
+            width: 100,
+            height: 400,
+            backgroundColor: "#202020",
+            scrollbarColor: THUMB,
+          }}
+        >
+          {Array.from({ length: 20 }, (_, index) => (
+            <div key={index} style={{ height: 200, flexShrink: 0 }} />
+          ))}
+        </virtual-list>
+      )
+      renderer.dispatchNativeEvents()
+      const file = path.join(SHOTS_DIR, "scrollbar-list-tall-rows.png")
+      renderer.captureScreenshot(file)
+      const pixels = readPixels(file)
+      const rows: number[] = []
+      for (let y = 0; y < 400; y++) {
+        const [r, g, b] = pixels.at(97, y)
+        if (r > 200 && g < 60 && b < 60) rows.push(y)
+      }
+      expect(rows[0]).toBe(0)
+      expect(rows.length).toBeGreaterThanOrEqual(38)
+      expect(rows.length).toBeLessThanOrEqual(42)
+    } finally {
+      unmount()
+    }
+  })
 })
 
 describeNative("scrollbarColor on a box around a <virtual-list>", () => {
