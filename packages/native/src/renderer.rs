@@ -1385,8 +1385,14 @@ impl GpuixRenderer {
         let mut tree = self.tree.lock().unwrap();
         let destroyed =
             apply_batch_to_tree(&mut tree, json.as_bytes()).map_err(Error::from_reason)?;
+        let dirty = tree.take_dirty();
         drop(tree);
-        self.request_invalidate()?;
+        // A re-render that changed nothing sends a batch of identical resends.
+        // Waking the window for it makes it rebuild and diff the whole element
+        // tree to draw the frame it already has.
+        if dirty {
+            self.request_invalidate()?;
+        }
         Ok(destroyed)
     }
 
@@ -2881,9 +2887,14 @@ impl WebGpuixRenderer {
         &self,
         json: String,
     ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
-        let destroyed = apply_batch_to_tree(&mut self.tree.lock().unwrap(), json.as_bytes())
+        let mut tree = self.tree.lock().unwrap();
+        let destroyed = apply_batch_to_tree(&mut tree, json.as_bytes())
             .map_err(|error| wasm_bindgen::JsValue::from_str(&error))?;
-        notify_web();
+        let dirty = tree.take_dirty();
+        drop(tree);
+        if dirty {
+            notify_web();
+        }
         Ok(web_number_array(destroyed))
     }
 
@@ -4665,7 +4676,7 @@ impl GpuixView {
         window: &gpui::Window,
         cx: &gpui::App,
     ) -> Option<Arc<[u64]>> {
-        if !tree.keyboard_focus_dim || !window.last_input_was_keyboard() {
+        if !tree.keyboard_focus_dim() || !window.last_input_was_keyboard() {
             return None;
         }
         let focused = window.focused(cx)?.id();
@@ -6448,10 +6459,10 @@ pub fn apply_batch_to_tree(tree: &mut RetainedTree, bytes: &[u8]) -> BatchResult
                 tree.set_event_listener(id, event_type, has_handler);
             }
             BatchOp::SetRoot { id } => {
-                tree.root_id = Some(id);
+                tree.set_root(id);
             }
             BatchOp::SetKeyboardFocusDim { enabled } => {
-                tree.keyboard_focus_dim = enabled;
+                tree.set_keyboard_focus_dim(enabled);
             }
             BatchOp::SetCustomProp { id, key, value } => {
                 tree.set_custom_prop(id, key, value);
@@ -7085,6 +7096,92 @@ mod batch_tests {
             );
         }
         out
+    }
+
+    /// Whether the batch left something a frame would draw differently. The
+    /// window is only woken for these, so a wrong `false` is a stale screen and
+    /// a wrong `true` is a wasted frame.
+    fn dirty_after(tree: &mut RetainedTree, json: &str) -> bool {
+        apply(tree, json).expect("valid batch");
+        tree.take_dirty()
+    }
+
+    const MOUNT: &str = r##"[
+        ["createElement",1,"div"],["createElement",2,"text"],["createElement",3,"div"],
+        ["appendChild",1,2],["appendChild",1,3],["setRoot",1],
+        ["setStyle",1,{"width":100,"backgroundColor":"#112233"}],
+        ["setStyle",3,{"height":10}],
+        ["setText",2,"hello"],
+        ["setEventListener",3,"click",true],
+        ["setCustomProp",3,"aria-label","row"],
+        ["setCustomProp",3,"testId","row"],
+        ["setCustomProp",3,"autoFocus",true]
+    ]"##;
+
+    #[test]
+    fn mounting_marks_the_tree_dirty() {
+        let mut tree = RetainedTree::new();
+        assert!(dirty_after(&mut tree, MOUNT));
+    }
+
+    #[test]
+    fn resending_everything_unchanged_is_not_dirty() {
+        let mut tree = RetainedTree::new();
+        apply(&mut tree, MOUNT).expect("valid batch");
+        tree.take_dirty();
+
+        // The same ops again, with the style keys reordered: interning keys on
+        // raw bytes, so this reaches `set_style` as a different `Arc`.
+        let resend = r##"[
+            ["setRoot",1],
+            ["setStyle",1,{"backgroundColor":"#112233","width":100}],
+            ["setStyle",3,{"height":10}],
+            ["setText",2,"hello"],
+            ["setEventListener",3,"click",true],
+            ["setCustomProp",3,"aria-label","row"],
+            ["setCustomProp",3,"testId","row"],
+            ["setCustomProp",3,"autoFocus",true],
+            ["setKeyboardFocusDim",true],
+            ["setCustomProp",3,"missing",null]
+        ]"##;
+        assert!(!dirty_after(&mut tree, resend));
+    }
+
+    #[test]
+    fn each_kind_of_change_is_dirty() {
+        let changes = [
+            r#"[["setStyle",3,{"height":11}]]"#,
+            r#"[["setText",2,"changed"]]"#,
+            r#"[["setEventListener",3,"click",false]]"#,
+            r#"[["setEventListener",3,"mouseDown",true]]"#,
+            r#"[["setCustomProp",3,"aria-label","other"]]"#,
+            r#"[["setCustomProp",3,"aria-label",null]]"#,
+            r#"[["setCustomProp",3,"testId","other"]]"#,
+            r#"[["setCustomProp",3,"autoFocus",false]]"#,
+            r#"[["setKeyboardFocusDim",false]]"#,
+            r#"[["createElement",4,"div"]]"#,
+            r#"[["destroyElement",3]]"#,
+            r#"[["insertBefore",1,3,2]]"#,
+            r#"[["setRoot",3]]"#,
+        ];
+        for change in changes {
+            let mut tree = RetainedTree::new();
+            apply(&mut tree, MOUNT).expect("valid batch");
+            tree.take_dirty();
+            assert!(dirty_after(&mut tree, change), "{change} must repaint");
+        }
+    }
+
+    #[test]
+    fn a_rejected_batch_does_not_leave_the_tree_dirty() {
+        let mut tree = RetainedTree::new();
+        apply(&mut tree, MOUNT).expect("valid batch");
+        tree.take_dirty();
+
+        apply(&mut tree, r#"[["setText",2,"changed"],["setStyle",2,123]]"#)
+            .expect_err("malformed style");
+
+        assert!(!tree.take_dirty());
     }
 
     /// The regression test for batch atomicity. `intern_style_payload` used to

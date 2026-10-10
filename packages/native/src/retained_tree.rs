@@ -189,8 +189,13 @@ pub struct RetainedTree {
     /// The root element ID set by appendChildToContainer.
     pub root_id: Option<u64>,
     /// Dim other focusables while a control has keyboard focus. Set per root.
-    pub keyboard_focus_dim: bool,
+    keyboard_focus_dim: bool,
     next_revision: u64,
+    /// Something a frame would draw changed since the last `take_dirty`. A batch
+    /// of resends, which is what a re-render with unchanged props produces,
+    /// leaves it false, so the window is not asked to rebuild its element tree
+    /// for a frame that would come out identical.
+    dirty: bool,
 }
 
 impl RetainedTree {
@@ -202,16 +207,45 @@ impl RetainedTree {
             root_id: None,
             keyboard_focus_dim: true,
             next_revision: 1,
+            dirty: false,
+        }
+    }
+
+    /// Whether a frame drawn now would differ from the last one, clearing the
+    /// answer. Call once per applied batch.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
+    pub fn keyboard_focus_dim(&self) -> bool {
+        self.keyboard_focus_dim
+    }
+
+    pub fn set_keyboard_focus_dim(&mut self, enabled: bool) {
+        if self.keyboard_focus_dim != enabled {
+            self.keyboard_focus_dim = enabled;
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_root(&mut self, id: u64) {
+        if self.root_id != Some(id) {
+            self.root_id = Some(id);
+            self.dirty = true;
         }
     }
 
     pub fn create_element(&mut self, id: u64, element_type: String) {
+        self.dirty = true;
         let revision = self.take_revision();
         self.elements
             .insert(id, RetainedElement::new(id, element_type, revision));
     }
 
     fn take_revision(&mut self) -> u64 {
+        // Every content change takes a revision to invalidate caches, so this is
+        // the one place that covers style, text, structure and custom props.
+        self.dirty = true;
         let revision = self.next_revision;
         self.next_revision = self.next_revision.wrapping_add(1).max(1);
         revision
@@ -258,6 +292,9 @@ impl RetainedTree {
         }
         let mut destroyed = Vec::new();
         self.destroy_element_recursive(id, &mut destroyed);
+        if !destroyed.is_empty() {
+            self.dirty = true;
+        }
         if self.root_id == Some(id) {
             self.root_id = None;
         }
@@ -364,11 +401,14 @@ impl RetainedTree {
 
     pub fn set_event_listener(&mut self, id: u64, event_type: String, has_handler: bool) {
         if let Some(element) = self.elements.get_mut(&id) {
-            if has_handler {
-                element.events.insert(event_type);
+            let changed = if has_handler {
+                element.events.insert(event_type)
             } else {
-                element.events.remove(&event_type);
-            }
+                element.events.remove(&event_type)
+            };
+            // Which listeners exist decides how the element is built, though it
+            // does not touch any cached text.
+            self.dirty |= changed;
         }
     }
 
@@ -390,11 +430,15 @@ impl RetainedTree {
             // `autoFocus` applies to every element type, so it is lifted out of
             // the custom-prop map that only custom elements read.
             if key == "autoFocus" {
-                element.auto_focus = value.as_bool().unwrap_or(false);
+                let auto_focus = value.as_bool().unwrap_or(false);
+                self.dirty |= element.auto_focus != auto_focus;
+                element.auto_focus = auto_focus;
                 return;
             }
             if key == "testId" {
-                element.test_id = value.as_str().map(str::to_string);
+                let test_id = value.as_str().map(str::to_string);
+                self.dirty |= element.test_id != test_id;
+                element.test_id = test_id;
                 return;
             }
             if value.is_null() {
