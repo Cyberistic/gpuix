@@ -4,7 +4,7 @@ import ReactReconciler from "react-reconciler"
 import type { OpaqueRoot } from "react-reconciler"
 import { ConcurrentRoot } from "react-reconciler/constants.js"
 import { createMutationQueue } from "@gpuix/native/host"
-import { GpuixContext } from "../hooks/use-gpuix.js"
+import { GpuixContext, type GpuixContextValue } from "../hooks/use-gpuix.js"
 import type {
   Container,
   NativeRenderer,
@@ -135,6 +135,11 @@ export function createRoot(
     null
   )
 
+  // One object for the life of the root. A fresh `{ renderer }` per `render()`
+  // call is a context change, which re-renders every `useGpuix()` consumer, and
+  // through them busts `memo` below it, on every re-render of the root.
+  const contextValue: GpuixContextValue = { renderer }
+
   return {
     render: (node): void => {
       const activeContainer = container
@@ -144,7 +149,7 @@ export function createRoot(
       reconciler.updateContainer(
         React.createElement(
           GpuixContext.Provider,
-          { value: { renderer } },
+          { value: contextValue },
           node
         ),
         activeContainer,

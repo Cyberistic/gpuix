@@ -10,7 +10,7 @@
  * Slow CPU: THROTTLE=utility bun --hot chat.tsx
  */
 
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyMacCpuThrottleFromEnv,
   Button,
@@ -2222,6 +2222,34 @@ export function ChatApp({
     setFocusTick((value) => value + 1)
   }
 
+  const retryLastReply = () => {
+    let cut = -1
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i]?.kind === 'user') {
+        cut = i
+        break
+      }
+    }
+    const lastUser = cut >= 0 ? turns[cut] : undefined
+    if (!lastUser || lastUser.kind !== 'user') return
+    const modelLabel = MODELS.find((item) => item.id === model)?.label ?? model
+    const reply = demoReply({ text: lastUser.text, modelLabel, mode })
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === activeId
+          ? { ...conversation, turns: [...conversation.turns.slice(0, cut + 1), ...reply] }
+          : conversation,
+      ),
+    )
+    setTailTick((value) => value + 1)
+  }
+  // `Transcript` is memo: a fresh closure per render would re-render every row
+  // on each keystroke in the composer. The ref keeps the callback identity
+  // stable while it always runs the latest closure.
+  const retryRef = useRef(retryLastReply)
+  retryRef.current = retryLastReply
+  const onRetry = useCallback(() => retryRef.current(), [])
+
   useEffect(() => {
     if (tailTick === 0) return
     const id = listRef.current?.id
@@ -2314,27 +2342,7 @@ export function ChatApp({
           turns={turns}
           includeSafeMdx={showSafeMdx}
           listRef={listRef}
-          onRetry={() => {
-            let cut = -1
-            for (let i = turns.length - 1; i >= 0; i--) {
-              if (turns[i]?.kind === 'user') {
-                cut = i
-                break
-              }
-            }
-            const lastUser = cut >= 0 ? turns[cut] : undefined
-            if (!lastUser || lastUser.kind !== 'user') return
-            const modelLabel = MODELS.find((item) => item.id === model)?.label ?? model
-            const reply = demoReply({ text: lastUser.text, modelLabel, mode })
-            setConversations((current) =>
-              current.map((conversation) =>
-                conversation.id === activeId
-                  ? { ...conversation, turns: [...conversation.turns.slice(0, cut + 1), ...reply] }
-                  : conversation,
-              ),
-            )
-            setTailTick((value) => value + 1)
-          }}
+          onRetry={onRetry}
         />
         <Composer
           value={draft}
