@@ -2991,6 +2991,7 @@ text imports no longer need a runtime flag.
 | Focus | `onFocus` | — |
 | Blur | `onBlur` | — |
 | Scroll | `onScroll` | `deltaX`, `deltaY`, `precise`, `touchPhase`, `modifiers` |
+| Layout | `onLayout` | `width`, `height`, `x`, `y` — `<div>` and `<text>` only |
 | File drop | `onFileDrop` | `paths`, `x`, `y` — Unicode filesystem paths from Finder or the OS |
 | Change | `onChange` | `value` — `<input>` and `<textarea>` only |
 | Submit | `onSubmit` | `value` — `<input>` always, `<textarea>` when `onSubmit` is set |
@@ -3017,6 +3018,22 @@ Put the listener on a **`div`**, **`text`**, **`img`**, **`svg`**, **`input`**,
   <virtual-list estimatedItemHeight={24}>{rows}</virtual-list>
 </div>
 ```
+
+**`onLayout`** is `ResizeObserver` for an element. It fires after the first paint
+that has the listener and again each time the element's **size** changes, with
+its border box: `width` and `height`, and `x` and `y` in window pixels. Moving
+without resizing, as a row does when a list scrolls, fires nothing. Removing the
+listener and adding it back reports the size again. An element with
+`visibility: "hidden"` is not painted, so it reports nothing until it is shown.
+
+```tsx
+<div onLayout={(event) => setWidth(event.width ?? 0)} style={{ flex: 1 }} />
+```
+
+The event arrives after the frame that laid the element out, so a handler that
+sets state paints the new size one frame later. Read it for decisions such as
+which layout to render, not to position something against the element in the
+same frame.
 
 Keyboard and focus listeners create a persistent GPUI `FocusHandle`
 automatically. A listener alone does not put a `div` in the Tab order; add

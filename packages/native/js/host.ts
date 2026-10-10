@@ -431,6 +431,14 @@ export interface HostProps {
   // ── Scroll events ──────────────────────────────────────────────
   onScroll?: (event: EventPayload) => void
 
+  // ── Layout events ──────────────────────────────────────────────
+  /**
+   * The element's border box, reported after the first paint and each time its
+   * size changes: `width` and `height`, plus `x` and `y` in window coordinates.
+   * Moving without resizing reports nothing. Supported on `div` and `text`.
+   */
+  onLayout?: (event: EventPayload) => void
+
   // ── File drop (Finder / OS paths) ───────────────────────────────
   onFileDrop?: (event: EventPayload) => void
 
