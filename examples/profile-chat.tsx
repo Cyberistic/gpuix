@@ -10,6 +10,9 @@
  * MODE=mount       mounts the 1000-turn chat from scratch, over and over
  * MODE=sidebar     clicks the sidebar toggle through the automation client
  *
+ * QUERY=...        the find query that is active before the loop starts, 'p' by
+ *                  default; set it empty to measure a chat with no search
+ *
  * Wall time is noisy on a busy machine, so every mode also reports the CPU time
  * the process spent per iteration, which load on other processes does not move.
  */
@@ -39,7 +42,7 @@ function cpuMs() {
 let root = createTestRoot()
 root.render(app(''))
 for (let i = 0; i < 10; i++) root.renderer.flush()
-root.render(app('p'))
+root.render(app(process.env.QUERY ?? 'p'))
 
 const automation = mode === 'sidebar' ? await connectTest(root.renderer) : undefined
 if (automation) {
