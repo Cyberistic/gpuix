@@ -4783,28 +4783,19 @@ impl GpuixView {
         }) {
             self.pending_focus_element = None;
         }
-        let tab_index = |element: &crate::retained_tree::RetainedElement| {
-            element
-                .custom_props
-                .get("tabIndex")
-                .and_then(|value| value.as_i64())
-                .and_then(|index| isize::try_from(index).ok())
-        };
-        let needs_focus = |element: &crate::retained_tree::RetainedElement| {
-            matches!(element.element_type.as_str(), "input" | "textarea")
-                || tab_index(element).is_some()
-                || element.events.contains("keyDown")
-                || element.events.contains("keyUp")
-                || element.events.contains("focus")
-                || element.events.contains("blur")
-        };
+        // Only the focusable elements are visited. This runs every frame, and
+        // the rest of the tree is orders of magnitude larger.
+        //
         // Create handles for elements that need focus but don't have one yet.
-        for (&id, element) in &tree.elements {
-            let tab_index = tab_index(element).or_else(|| {
+        for &id in &tree.focusable_ids {
+            let Some(element) = tree.elements.get(&id) else {
+                continue;
+            };
+            let tab_index = element.tab_index().or_else(|| {
                 matches!(element.element_type.as_str(), "input" | "textarea").then_some(0)
             });
 
-            if needs_focus(element) && !self.focus_handles.contains_key(&id) {
+            if !self.focus_handles.contains_key(&id) {
                 let handle = match tab_index {
                     Some(index) => cx.focus_handle().tab_index(index).tab_stop(index >= 0),
                     None => cx.focus_handle(),
@@ -4841,8 +4832,10 @@ impl GpuixView {
                 .get(id)
                 .is_some_and(|element| element.events.contains(event))
         });
-        for (&id, element) in &tree.elements {
-            let Some(handle) = self.focus_handles.get(&id).cloned() else {
+        for &id in &tree.focusable_ids {
+            let (Some(element), Some(handle)) =
+                (tree.elements.get(&id), self.focus_handles.get(&id).cloned())
+            else {
                 continue;
             };
             let focus_key = (id, "focus".to_string());
@@ -4868,7 +4861,7 @@ impl GpuixView {
 
         // Clean up handles for elements that no longer exist.
         self.focus_handles
-            .retain(|id, _| tree.elements.get(id).is_some_and(&needs_focus));
+            .retain(|id, _| tree.focusable_ids.contains(id));
     }
 }
 

@@ -52,6 +52,25 @@ pub struct RetainedElement {
 }
 
 impl RetainedElement {
+    /// The element's `tabIndex`, when it has a usable one.
+    pub fn tab_index(&self) -> Option<isize> {
+        self.custom_props
+            .get("tabIndex")
+            .and_then(|value| value.as_i64())
+            .and_then(|index| isize::try_from(index).ok())
+    }
+
+    /// Whether the element must own a gpui focus handle: it takes text, is in the
+    /// tab order, or listens for a key or focus event.
+    pub fn needs_focus(&self) -> bool {
+        matches!(self.element_type.as_str(), "input" | "textarea")
+            || self.tab_index().is_some()
+            || self.events.contains("keyDown")
+            || self.events.contains("keyUp")
+            || self.events.contains("focus")
+            || self.events.contains("blur")
+    }
+
     pub fn new(id: u64, element_type: String, revision: u64) -> Self {
         Self {
             id,
@@ -185,6 +204,10 @@ impl StyleTable {
 pub struct RetainedTree {
     pub elements: ElementMap,
     pub motion_ids: HashSet<u64>,
+    /// Elements that `needs_focus`, in id order. Kept as mutations arrive so the
+    /// per-frame focus sync visits these few instead of every retained element:
+    /// a long chat retains thousands, and nearly none are focusable.
+    pub focusable_ids: std::collections::BTreeSet<u64>,
     pub styles: StyleTable,
     /// The root element ID set by appendChildToContainer.
     pub root_id: Option<u64>,
@@ -203,6 +226,7 @@ impl RetainedTree {
         Self {
             elements: ElementMap::default(),
             motion_ids: HashSet::new(),
+            focusable_ids: Default::default(),
             styles: StyleTable::default(),
             root_id: None,
             keyboard_focus_dim: true,
@@ -240,6 +264,21 @@ impl RetainedTree {
         let revision = self.take_revision();
         self.elements
             .insert(id, RetainedElement::new(id, element_type, revision));
+        self.track_focusable(id);
+    }
+
+    /// Bring `focusable_ids` in line with `id` after anything `needs_focus`
+    /// reads has changed.
+    fn track_focusable(&mut self, id: u64) {
+        if self
+            .elements
+            .get(&id)
+            .is_some_and(RetainedElement::needs_focus)
+        {
+            self.focusable_ids.insert(id);
+        } else {
+            self.focusable_ids.remove(&id);
+        }
     }
 
     fn take_revision(&mut self) -> u64 {
@@ -307,6 +346,7 @@ impl RetainedTree {
     fn destroy_element_recursive(&mut self, id: u64, destroyed: &mut Vec<u64>) {
         if let Some(element) = self.elements.remove(&id) {
             self.motion_ids.remove(&id);
+            self.focusable_ids.remove(&id);
             destroyed.push(id);
             for child_id in element.children {
                 self.destroy_element_recursive(child_id, destroyed);
@@ -409,6 +449,9 @@ impl RetainedTree {
             // Which listeners exist decides how the element is built, though it
             // does not touch any cached text.
             self.dirty |= changed;
+            if changed {
+                self.track_focusable(id);
+            }
         }
     }
 
@@ -422,6 +465,7 @@ impl RetainedTree {
         let mut changed = false;
         let is_highlight = key == "highlight";
         let is_motion = key == "motion";
+        let is_tab_index = key == "tabIndex";
         let was_declaration = self
             .elements
             .get(&id)
@@ -452,6 +496,9 @@ impl RetainedTree {
         }
         if !changed {
             return;
+        }
+        if is_tab_index {
+            self.track_focusable(id);
         }
         if is_motion {
             if self
@@ -881,6 +928,47 @@ mod tests {
         let after = tree.elements[&1].search_revision;
         tree.destroy_element(3);
         assert!(tree.elements[&1].search_revision > after);
+    }
+
+    /// `focusable_ids` stands in for a scan of every element, so it has to
+    /// agree with `needs_focus` after any mutation that can change the answer.
+    #[test]
+    fn focusable_ids_follow_what_needs_focus_reads() {
+        let mut tree = RetainedTree::new();
+        tree.create_element(1, "div".to_string());
+        tree.create_element(2, "input".to_string());
+        tree.create_element(3, "div".to_string());
+        tree.create_element(4, "div".to_string());
+        tree.append_child(1, 2);
+        tree.append_child(1, 3);
+        tree.append_child(1, 4);
+        let focusable =
+            |tree: &RetainedTree| tree.focusable_ids.iter().copied().collect::<Vec<_>>();
+        assert_eq!(focusable(&tree), vec![2], "inputs always take focus");
+
+        tree.set_event_listener(3, "keyDown".to_string(), true);
+        tree.set_custom_prop(4, "tabIndex".to_string(), serde_json::json!(0));
+        assert_eq!(focusable(&tree), vec![2, 3, 4]);
+
+        // A click listener has nothing to do with focus.
+        tree.set_event_listener(1, "click".to_string(), true);
+        assert_eq!(focusable(&tree), vec![2, 3, 4]);
+
+        // Other listeners keep an element in the set until the last one goes.
+        tree.set_event_listener(3, "blur".to_string(), true);
+        tree.set_event_listener(3, "keyDown".to_string(), false);
+        assert_eq!(focusable(&tree), vec![2, 3, 4]);
+        tree.set_event_listener(3, "blur".to_string(), false);
+        assert_eq!(focusable(&tree), vec![2, 4]);
+
+        tree.set_custom_prop(4, "tabIndex".to_string(), serde_json::Value::Null);
+        assert_eq!(focusable(&tree), vec![2]);
+
+        tree.destroy_element(1);
+        assert!(
+            tree.focusable_ids.is_empty(),
+            "destroying a subtree forgets its ids"
+        );
     }
 
     #[test]
