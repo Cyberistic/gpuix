@@ -2604,6 +2604,7 @@ dependencies = [
  "http_client",
  "js-sys",
  "log",
+ "memchr",
  "minisign-verify",
  "napi",
  "napi-build",
