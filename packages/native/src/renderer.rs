@@ -5764,6 +5764,8 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
         Some("center") => el = el.items_center(),
         Some("start") | Some("flex-start") => el = el.items_start(),
         Some("end") | Some("flex-end") => el = el.items_end(),
+        Some("stretch") => el = el.items_stretch(),
+        Some("baseline") => el = el.items_baseline(),
         _ => {}
     }
     match style.align_content.as_deref() {
@@ -5783,6 +5785,7 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
         Some("end") | Some("flex-end") => el = el.justify_end(),
         Some("between") | Some("space-between") => el = el.justify_between(),
         Some("around") | Some("space-around") => el = el.justify_around(),
+        Some("evenly") | Some("space-evenly") => el = el.justify_evenly(),
         _ => {}
     }
     match style.align_self.as_deref() {
@@ -5898,6 +5901,11 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
     if let Some(left) = style.left {
         el = el.left(gpui::px(left as f32));
     }
+    if let Some(ratio) = style.aspect_ratio {
+        if ratio > 0.0 && ratio.is_finite() {
+            el = el.aspect_ratio(ratio as f32);
+        }
+    }
     if let Some(background) = style.resolved_background() {
         el = el.bg(background);
     }
@@ -5988,16 +5996,31 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
             el = el.border_color(color);
         }
     }
-    if let Some(ref shadow) = style.box_shadow {
-        if let Some(color) = crate::color::parse_color_rgba(&shadow.color) {
-            let shadow = gpui::BoxShadow::new(
-                gpui::px(shadow.offset_x as f32),
-                gpui::px(shadow.offset_y as f32),
-                color.into(),
-            )
-            .blur_radius(gpui::px(shadow.blur_radius.max(0.0) as f32))
-            .spread_radius(gpui::px(shadow.spread_radius as f32));
-            el = el.shadow(vec![shadow]);
+    match style.border_style.as_deref() {
+        Some("dashed") => el = el.border_dashed(),
+        Some("solid") => el.style().border_style = Some(gpui::BorderStyle::Solid),
+        _ => {}
+    }
+    if let Some(ref shadows) = style.box_shadow {
+        // A shadow whose colour does not parse is dropped on its own, so one
+        // bad entry does not take the rest of a list with it.
+        let shadows: Vec<gpui::BoxShadow> = shadows
+            .as_slice()
+            .iter()
+            .filter_map(|shadow| {
+                let color = crate::color::parse_color_rgba(&shadow.color)?;
+                let built = gpui::BoxShadow::new(
+                    gpui::px(shadow.offset_x as f32),
+                    gpui::px(shadow.offset_y as f32),
+                    color.into(),
+                )
+                .blur_radius(gpui::px(shadow.blur_radius.max(0.0) as f32))
+                .spread_radius(gpui::px(shadow.spread_radius as f32));
+                Some(if shadow.inset { built.inset() } else { built })
+            })
+            .collect();
+        if !shadows.is_empty() {
+            el = el.shadow(shadows);
         }
     }
     if style.outline_width.is_some() || style.outline_color.is_some() {

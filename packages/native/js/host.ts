@@ -100,6 +100,8 @@ export interface BoxShadow {
   blurRadius: number
   spreadRadius: number
   color: string
+  /** Draw inside the border box, like CSS `inset`. */
+  inset?: boolean
 }
 
 export interface LinearGradientStop {
@@ -177,7 +179,12 @@ export interface StyleDesc {
   borderTopRightRadius?: number
   borderBottomLeftRadius?: number
   borderBottomRightRadius?: number
-  boxShadow?: BoxShadow
+  /** One shadow, or a list painted in the order given. */
+  boxShadow?: BoxShadow | BoxShadow[]
+  /** Applies to every side. */
+  borderStyle?: "solid" | "dashed"
+  /** Width divided by height. Fills in whichever axis has no definite size. */
+  aspectRatio?: number
   /** CSS `outline`: a line outside the border box. Takes no layout space, so it
    *  can appear on focus without moving anything. Width defaults to 1. */
   outlineWidth?: number
