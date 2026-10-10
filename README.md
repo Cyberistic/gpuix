@@ -830,6 +830,37 @@ activation policy, so there is no menu-bar-agent mode yet. For a real
 background daemon, run the app from a `launchd` agent in
 `~/Library/LaunchAgents/`; launchd never activates the process.
 
+### Custom fonts
+
+`registerFont()` makes a font that is not installed on the machine available to
+`fontFamily`. It takes the bytes of a **TrueType or OpenType** file (`.ttf` or
+`.otf`).
+
+```tsx
+import { readFileSync } from 'node:fs'
+import { useGpuixRequired } from '@gpuix/react'
+
+function LoadFonts() {
+  const renderer = useGpuixRequired()
+  useEffect(() => {
+    renderer.registerFont?.(readFileSync('./Inter-Regular.ttf'))
+  }, [renderer])
+  return <div style={{ fontFamily: 'Inter' }}>Hello</div>
+}
+```
+
+Text that already named the family repaints with the font once it is
+registered, so there is no need to register before the first render. Register
+every weight and style of a family you use; text picks the closest one.
+
+The font must have family, full and PostScript names and a glyph for `"m"`.
+GPUI aborts the process on a font without the names, and silently drops a font
+without the glyph, so `registerFont()` throws for both and for bytes that are
+not a font. Fonts load into the process and last until it exits.
+
+WOFF and WOFF2 are not supported; convert them to TrueType first. The browser
+renderer does not have this method, use `FontFace` there.
+
 ### Let an agent drive the app
 
 Make focus opt-in through the environment, so a human run behaves normally and

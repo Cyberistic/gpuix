@@ -81,6 +81,8 @@ interface NativeTestRendererApi extends NativeRenderer {
   scrollToItem(elementId: number, index: number, offsetInItem?: number): void
   scrollIntoView(elementId: number): void
   setImage(elementId: number, bytes: Buffer | Uint8Array): void
+  /** Make a TrueType or OpenType font usable by `fontFamily`. */
+  registerFont(bytes: Buffer | Uint8Array): void
   setImagePixels(
     elementId: number,
     width: number,
@@ -564,6 +566,11 @@ export class TestRenderer implements NativeRenderer {
   setImage(elementId: number, bytes: Buffer | Uint8Array): void {
     this.native.flush()
     this.native.setImage(elementId, bytes as Buffer)
+    this.native.flush()
+  }
+
+  registerFont(bytes: Buffer | Uint8Array): void {
+    this.native.registerFont(bytes as Buffer)
     this.native.flush()
   }
 

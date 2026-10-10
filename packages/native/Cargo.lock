@@ -2622,6 +2622,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "time",
+ "ttf-parser",
  "two-face",
  "unicode-segmentation",
  "url",

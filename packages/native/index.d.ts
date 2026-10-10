@@ -162,6 +162,13 @@ export declare class GpuixRenderer {
    * an `<img>` host node. Prefer `setImagePixels` for live waveforms.
    */
   setImage(elementId: number, bytes: Buffer): void
+  /**
+   * Make the fonts in a TrueType or OpenType file (or a collection) usable by
+   * `fontFamily`, under the family names the file declares. Call it before
+   * the text that names the family is first laid out: a family that did not
+   * exist then has already fallen back to another font.
+   */
+  registerFont(data: Buffer): void
   getAutomationTree(): string
   getElementBounds(id: number): ElementBounds | null
   getAllText(): Array<string>
@@ -356,6 +363,8 @@ export declare class TestGpuixRenderer {
   setImagePixels(elementId: number, width: number, height: number, pixels: Buffer, format?: string | undefined | null): void
   /** Encoded image bytes onto an `<img>` host node. */
   setImage(elementId: number, bytes: Buffer): void
+  /** Make the fonts in a TrueType or OpenType file usable by `fontFamily`. */
+  registerFont(data: Buffer): void
   /**
    * The logical scroll anchor of a `<virtual-list>`:
    * `[itemIndex, offsetInItemPx, viewportHeightPx]`, or null for anything

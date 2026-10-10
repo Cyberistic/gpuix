@@ -31,6 +31,8 @@ thiserror = "2"
 pulldown-cmark = { version = "0.12", default-features = false }
 unicode-segmentation = "1"
 web-time = "1"
+# Checks fonts handed to `registerFont`; GPUI's text system aborts on malformed ones.
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 # Syntect compiles a grammar's TextMate regexes lazily, on the FIRST highlight
 # of that language, on the frame thread, inside a paint. fancy-regex takes

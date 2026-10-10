@@ -439,6 +439,10 @@ enum UiCommand {
         bytes: Vec<u8>,
         response: SyncSender<std::result::Result<(), String>>,
     },
+    RegisterFont {
+        bytes: Vec<u8>,
+        response: SyncSender<std::result::Result<(), String>>,
+    },
     GetScrollOffset {
         id: u64,
         response: SyncSender<Option<[f64; 2]>>,
@@ -632,6 +636,11 @@ async fn run_ui_commands(
                     .send(view.set_encoded_image(id, bytes, window, cx))
                     .ok();
             }),
+            UiCommand::RegisterFont { bytes, response } => {
+                window.update(cx, move |view, window, cx| {
+                    response.send(view.register_font(bytes, window, cx)).ok();
+                })
+            }
             UiCommand::GetScrollOffset { id, response } => {
                 let offset = VIRTUAL_LIST_STATES
                     .with(|cell| {
@@ -2254,6 +2263,36 @@ impl GpuixRenderer {
         Err(Error::from_reason("Unsupported operating system"))
     }
 
+    /// Make the fonts in a TrueType or OpenType file (or a collection) usable by
+    /// `fontFamily`, under the family names the file declares. Call it before
+    /// the text that names the family is first laid out: a family that did not
+    /// exist then has already fallen back to another font.
+    #[napi]
+    pub fn register_font(&self, data: Buffer) -> Result<()> {
+        let bytes = data.to_vec();
+        #[cfg(target_os = "macos")]
+        {
+            return update_window(move |view, window, cx| view.register_font(bytes, window, cx))?
+                .map_err(Error::from_reason);
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::RegisterFont { bytes, response })?;
+            return recv_ui_response(receiver, "the font registration")?
+                .map_err(Error::from_reason);
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        Err(Error::from_reason("Unsupported operating system"))
+    }
+
     #[napi]
     pub fn get_automation_tree(&self) -> Result<String> {
         self.request_invalidate()?;
@@ -3794,6 +3833,24 @@ impl GpuixView {
             cx.svg_renderer(),
         )?;
         self.set_live_image(id, image, window, cx)
+    }
+
+    /// Adds the fonts in `bytes` to the text system and repaints, so text that
+    /// names one of them picks it up.
+    pub(crate) fn register_font(
+        &mut self,
+        bytes: Vec<u8>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> std::result::Result<(), String> {
+        check_font(&bytes)?;
+        window
+            .text_system()
+            .add_fonts(vec![std::borrow::Cow::Owned(bytes)])
+            .map_err(|error| error.to_string())?;
+        cx.notify();
+        window.refresh();
+        Ok(())
     }
 
     pub(crate) fn scroll_element_into_view(&self, id: u64) -> bool {
@@ -7609,4 +7666,31 @@ mod window_options_tests {
             other => panic!("expected a layer-shell window kind, got {other:?}"),
         }
     }
+}
+
+/// Rejects fonts GPUI's text system cannot load. It unwraps the family, full and
+/// PostScript name records and aborts the whole process when one is missing, and
+/// skips a font without an "m" glyph, which would leave the family unresolvable.
+fn check_font(bytes: &[u8]) -> std::result::Result<(), String> {
+    use ttf_parser::name_id::{FAMILY, FULL_NAME, POST_SCRIPT_NAME};
+
+    let face = ttf_parser::Face::parse(bytes, 0)
+        .map_err(|error| format!("not a TrueType or OpenType font: {error}"))?;
+    for (id, what) in [
+        (FAMILY, "family"),
+        (FULL_NAME, "full"),
+        (POST_SCRIPT_NAME, "PostScript"),
+    ] {
+        let named = face
+            .names()
+            .into_iter()
+            .any(|name| name.name_id == id && name.to_string().is_some());
+        if !named {
+            return Err(format!("font has no {what} name"));
+        }
+    }
+    if face.glyph_index('m').is_none() {
+        return Err("font has no glyph for \"m\"".to_string());
+    }
+    Ok(())
 }

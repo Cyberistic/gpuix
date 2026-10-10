@@ -884,6 +884,20 @@ impl TestGpuixRenderer {
         })
     }
 
+    /// Make the fonts in a TrueType or OpenType file usable by `fontFamily`.
+    #[napi]
+    pub fn register_font(&self, data: Buffer) -> Result<()> {
+        let bytes = data.to_vec();
+        with_test_state(|cx, window, view| {
+            let view = view.clone();
+            cx.update_window(window, |_, window, app| {
+                view.update(app, |view, cx| view.register_font(bytes, window, cx))
+            })
+            .map_err(|e| Error::from_reason(e.to_string()))?
+            .map_err(Error::from_reason)
+        })
+    }
+
     /// The logical scroll anchor of a `<virtual-list>`:
     /// `[itemIndex, offsetInItemPx, viewportHeightPx]`, or null for anything
     /// else. `itemIndex == item count` is gpui's at-end sentinel.
