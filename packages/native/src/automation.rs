@@ -69,6 +69,37 @@ pub fn track_own_bounds<E: gpui::InteractiveElement>(el: E, id: u64) -> E {
     el.on_painted(move |bounds, _, _| record_bounds(id, bounds))
 }
 
+/// Record a host element's painted box, and its selection-start region, for
+/// automation and text selection.
+///
+/// A visible element reports its own box through `on_painted`, so tracking it
+/// adds nothing to the tree. The previous `bounds_tracker` child doubled the
+/// number of nodes gpui laid out, prepainted and painted for every `<div>` and
+/// `<text>`.
+///
+/// gpui does not call `on_painted` for `visibility: hidden`, and a hidden
+/// element still has a layout box that a locator or a measurement is entitled
+/// to read. `hidden` keeps the canvas for exactly those elements. The canvas is
+/// `absolute`, so the element must be a positioned parent.
+///
+/// The two paths differ by an element's border: the canvas fills the padding
+/// box, and `on_painted` reports the border box, which is what a DOM
+/// `getBoundingClientRect` reports.
+pub fn track_host_bounds<E>(el: E, id: u64, selection_start: Option<bool>, hidden: bool) -> E
+where
+    E: gpui::InteractiveElement + gpui::ParentElement,
+{
+    if hidden {
+        return el.child(bounds_tracker(id, selection_start));
+    }
+    el.on_painted(move |bounds, _, _| {
+        record_bounds(id, bounds);
+        if let Some(selectable) = selection_start {
+            crate::text::record_start_region(bounds, selectable);
+        }
+    })
+}
+
 pub fn record_bounds(id: u64, bounds: Bounds<Pixels>) {
     BOUNDS.with(|cell| {
         cell.borrow_mut()

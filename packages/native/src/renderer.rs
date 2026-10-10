@@ -4974,7 +4974,10 @@ pub(crate) fn build_element(
 ) -> gpui::AnyElement {
     use gpui::IntoElement;
 
-    let Some(element) = ctx.tree.elements.get(&id) else {
+    // Copy the tree reference out of `ctx`, so `element` borrows the tree and
+    // not the build context, which the children below need mutably.
+    let tree = ctx.tree;
+    let Some(element) = tree.elements.get(&id) else {
         return gpui::Empty.into_any_element();
     };
 
@@ -5233,18 +5236,17 @@ fn joined_text_content(
     if let Some(content) = element.content.as_deref().filter(|value| !value.is_empty()) {
         return Some(content.to_string());
     }
-    let mut parts = Vec::new();
+    let mut joined = String::new();
     for child_id in &element.children {
         let Some(child) = tree.elements.get(child_id) else {
             continue;
         };
         if child.element_type == "text" {
             if let Some(content) = child.content.as_deref() {
-                parts.push(content);
+                joined.push_str(content);
             }
         }
     }
-    let joined = parts.concat();
     (!joined.is_empty()).then_some(joined)
 }
 
@@ -5352,10 +5354,12 @@ pub(crate) fn build_host_container(
     if style.and_then(|style| style.position.as_deref()).is_none() {
         el = el.relative();
     }
-    el = el.child(crate::automation::bounds_tracker(
+    el = crate::automation::track_host_bounds(
+        el,
         element.id,
         selection_start_flag(style),
-    ));
+        is_hidden(style),
+    );
 
     if let Some(handle) = ctx.focus_handles.get(&element.id) {
         el = el.track_focus(handle);
@@ -5611,8 +5615,7 @@ pub(crate) fn build_host_container(
     }
 
     // Children
-    let child_ids: Vec<u64> = element.children.clone();
-    for child_id in child_ids {
+    for &child_id in &element.children {
         let child = build_element(child_id, ctx, window, cx);
         el = if overflow_x_only {
             el.child(gpui::div().flex_none().child(child))
@@ -5655,6 +5658,10 @@ fn text_content(
             ctx.inherited.selection_wash,
         )
     })
+}
+
+fn is_hidden(style: Option<&StyleDesc>) -> bool {
+    style.is_some_and(|style| style.visibility.as_deref() == Some("hidden"))
 }
 
 /// Explicit `userSelect` on this node. `None` means inherit; the ancestor

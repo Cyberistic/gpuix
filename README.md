@@ -2246,7 +2246,8 @@ elements live in the tree, not the order gpui paints them in.
 `getElementBounds(id)` returns the last painted box, or `null` if that node did
 not paint. It works on the live `GpuixRenderer` and on the test renderer.
 Bounds are recorded during **paint**, so read them after a frame, not in the
-same commit as mount.
+same commit as mount. The box is the element's border box, like a DOM
+`getBoundingClientRect`.
 
 ```tsx
 const box = renderer.getElementBounds?.(ref.current.id)
