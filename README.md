@@ -2991,6 +2991,7 @@ text imports no longer need a runtime flag.
 | Focus | `onFocus` | — |
 | Blur | `onBlur` | — |
 | Scroll | `onScroll` | `deltaX`, `deltaY`, `precise`, `touchPhase`, `modifiers` |
+| Scroll change | `onScrollChange` | `scrollX`, `scrollY` — `overflow: "scroll"` containers, not `<virtual-list>` |
 | Layout | `onLayout` | `width`, `height`, `x`, `y` — `<div>` and `<text>` only |
 | File drop | `onFileDrop` | `paths`, `x`, `y` — Unicode filesystem paths from Finder or the OS |
 | Change | `onChange` | `value` — `<input>` and `<textarea>` only |
@@ -3016,6 +3017,22 @@ Put the listener on a **`div`**, **`text`**, **`img`**, **`svg`**, **`input`**,
   style={{ width: 400, height: 300 }}
 >
   <virtual-list estimatedItemHeight={24}>{rows}</virtual-list>
+</div>
+```
+
+**`onScroll`** reports wheel input: the delta, before GPUI has applied it.
+**`onScrollChange`** reports the result, after any cause: the wheel, a
+scrollbar drag, `scrollTo`, `scrollIntoView`, or content that shrank under the
+offset. `scrollX` and `scrollY` are the pair `getScrollOffset` returns, 0 at the
+start and negative as the content scrolls. The offset at the first paint is the
+baseline and is not reported. Use `onVisibleRange` on a `<virtual-list>`.
+
+```tsx
+<div
+  style={{ height: 300, overflow: 'scroll' }}
+  onScrollChange={(event) => setStuck((event.scrollY ?? 0) < -80)}
+>
+  {rows}
 </div>
 ```
 

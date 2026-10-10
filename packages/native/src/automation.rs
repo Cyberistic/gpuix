@@ -85,14 +85,13 @@ pub fn track_own_bounds<E: gpui::InteractiveElement>(el: E, id: u64) -> E {
 /// The box is the border box, which is what a DOM `getBoundingClientRect`
 /// reports. `bounds_tracker` fills the padding box instead.
 ///
-/// `layout` sees the painted box right after it is recorded, and is how
-/// `onLayout` learns the size. `on_painted` takes one listener, so it shares
-/// this one.
+/// `report` sees the painted box right after it is recorded. `on_painted`
+/// takes one listener, so the paint-driven events share this one.
 pub fn track_host_bounds<E>(
     el: E,
     id: u64,
     selection_start: Option<bool>,
-    layout: Option<LayoutReporter>,
+    report: Option<PaintReporter>,
 ) -> E
 where
     E: gpui::InteractiveElement,
@@ -102,14 +101,15 @@ where
         if let Some(selectable) = selection_start {
             crate::text::record_start_region(bounds, selectable);
         }
-        if let Some(layout) = &layout {
-            layout(bounds, cx);
+        if let Some(report) = &report {
+            report(bounds, cx);
         }
     })
 }
 
-/// Called with an element's painted box on every paint, from inside paint.
-pub type LayoutReporter = Rc<dyn Fn(Bounds<Pixels>, &mut App)>;
+/// Called with an element's painted box on every paint, from inside paint. It
+/// is how `onLayout` and `onScrollChange` see what the frame produced.
+pub type PaintReporter = Rc<dyn Fn(Bounds<Pixels>, &mut App)>;
 
 pub fn record_bounds(id: u64, bounds: Bounds<Pixels>) {
     BOUNDS.with(|cell| {

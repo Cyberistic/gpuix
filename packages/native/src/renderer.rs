@@ -3486,13 +3486,21 @@ pub(crate) struct GpuixView {
     /// Resolved `highlight` state, keyed by the element that declared it.
     /// Empty in every app that does not use search.
     highlights: HashMap<u64, HighlightCacheEntry>,
-    /// Last size reported through `onLayout`, for elements that have the
-    /// listener. Shared with the paint closures that compare against it.
-    layout_sizes: LayoutSizes,
+    /// What `onLayout` and `onScrollChange` last reported, for the elements that
+    /// have the listener. Shared with the paint closures that compare against it.
+    paint_reports: SharedPaintReports,
 }
 
-/// See `GpuixView::layout_sizes`.
-pub(crate) type LayoutSizes = Rc<RefCell<HashMap<u64, (f32, f32)>>>;
+#[derive(Default)]
+pub(crate) struct PaintReports {
+    /// Border-box size last delivered through `onLayout`.
+    sizes: HashMap<u64, (f32, f32)>,
+    /// Scroll offset last seen for `onScrollChange`. Recorded on the first paint
+    /// without an event, so only movement is reported.
+    scrolls: HashMap<u64, (f32, f32)>,
+}
+
+pub(crate) type SharedPaintReports = Rc<RefCell<PaintReports>>;
 
 /// Two-level cache for one element's `highlight`.
 ///
@@ -3780,7 +3788,7 @@ impl GpuixView {
             selection_scroll_task: None,
             clock: crate::automation::AutomationClock::new(),
             highlights: HashMap::new(),
-            layout_sizes: LayoutSizes::default(),
+            paint_reports: SharedPaintReports::default(),
         }
     }
 
@@ -4016,7 +4024,7 @@ impl GpuixView {
             selection: self.selection.clone(),
             inherited,
             highlights: &mut self.highlights,
-            layout_sizes: &self.layout_sizes,
+            paint_reports: &self.paint_reports,
             highlight_events: &mut highlight_events,
             keyboard_focus,
         };
@@ -4142,7 +4150,7 @@ pub(crate) struct BuildCtx<'a> {
     pub inherited: Inherited,
     /// Persistent `highlight` caches, keyed by the declaring element.
     highlights: &'a mut HashMap<u64, HighlightCacheEntry>,
-    layout_sizes: &'a LayoutSizes,
+    paint_reports: &'a SharedPaintReports,
     /// `onHighlight` payloads queued during the build.
     ///
     /// Never emitted inline: a handler that calls `setState` repaints, which
@@ -4919,12 +4927,19 @@ impl gpui::Render for GpuixView {
         // Pruned by listener, not existence: dropping `onLayout` and adding it
         // back reports the size again, like a fresh observer.
         {
-            let mut sizes = self.layout_sizes.borrow_mut();
-            if !sizes.is_empty() {
-                sizes.retain(|id, _| {
+            let mut reports = self.paint_reports.borrow_mut();
+            if !reports.sizes.is_empty() {
+                reports.sizes.retain(|id, _| {
                     tree.elements
                         .get(id)
                         .is_some_and(|element| element.events.contains("layout"))
+                });
+            }
+            if !reports.scrolls.is_empty() {
+                reports.scrolls.retain(|id, _| {
+                    tree.elements
+                        .get(id)
+                        .is_some_and(|element| element.events.contains("scrollChange"))
                 });
             }
         }
@@ -4958,7 +4973,7 @@ impl gpui::Render for GpuixView {
                     selection: self.selection.clone(),
                     inherited: Inherited::root(&theme),
                     highlights: &mut self.highlights,
-                    layout_sizes: &self.layout_sizes,
+                    paint_reports: &self.paint_reports,
                     highlight_events: &mut highlight_events,
                     keyboard_focus,
                 };
@@ -5437,7 +5452,7 @@ pub(crate) fn build_host_container(
         el,
         element.id,
         selection_start_flag(style),
-        layout_reporter(element.id, &element.events, ctx),
+        paint_reporter(element.id, &element.events, ctx),
     );
 
     if let Some(handle) = ctx.focus_handles.get(&element.id) {
@@ -6186,53 +6201,116 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
     }
 }
 
-/// `onLayout` for one element: its painted box after the first paint with the
-/// listener, then again each time its size changes. A move without a resize
-/// reports nothing, so scrolling a list does not queue an event per row.
+/// The paint-driven events of one element, as one reporter for `on_painted`.
 ///
-/// The event is queued after the paint that saw the change, never from inside
-/// it. The browser build calls the listener synchronously, and a handler that
-/// sets state would re-enter the frame that is being painted.
-fn layout_reporter(
+/// `onLayout`: its border box after the first paint with the listener, then again
+/// each time its size changes. A move without a resize reports nothing, so
+/// scrolling a list does not queue an event per row.
+///
+/// `onScrollChange`: its scroll offset each time it differs from the last paint,
+/// whatever moved it. The wheel is only one cause; a scrollbar drag or
+/// `scrollTo` moves it too, and gpui raises no event for those.
+///
+/// Events are queued after the paint that saw the change, never from inside it.
+/// The browser build calls the listener synchronously, and a handler that sets
+/// state would re-enter the frame that is being painted.
+fn paint_reporter(
     id: u64,
     events: &HashSet<String>,
     ctx: &BuildCtx,
-) -> Option<crate::automation::LayoutReporter> {
-    if !events.contains("layout") {
+) -> Option<crate::automation::PaintReporter> {
+    let layout = events.contains("layout");
+    let scroll = events
+        .contains("scrollChange")
+        .then(|| ctx.scroll_handles.get(&id).cloned())
+        .flatten();
+    if !layout && scroll.is_none() {
         return None;
     }
     let callback = ctx.event_callback.clone()?;
-    let sizes = ctx.layout_sizes.clone();
+    let reports = ctx.paint_reports.clone();
     Some(Rc::new(move |bounds, cx| {
-        let size = (
-            f32::from(bounds.size.width),
-            f32::from(bounds.size.height),
-        );
-        {
-            let mut sizes = sizes.borrow_mut();
-            let unchanged = sizes.get(&id).is_some_and(|last| {
-                (last.0 - size.0).abs() < LAYOUT_EPSILON && (last.1 - size.1).abs() < LAYOUT_EPSILON
-            });
-            if unchanged {
-                return;
-            }
-            sizes.insert(id, size);
+        if layout {
+            report_layout(id, bounds, &reports, &callback, cx);
         }
-        let callback = Some(callback.clone());
-        cx.defer(move |_| {
-            emit_event_full(&callback, id, "layout", |payload| {
-                payload.x = Some(f64::from(f32::from(bounds.origin.x)));
-                payload.y = Some(f64::from(f32::from(bounds.origin.y)));
-                payload.width = Some(f64::from(size.0));
-                payload.height = Some(f64::from(size.1));
-            });
-        });
+        if let Some(handle) = &scroll {
+            report_scroll(id, handle.offset(), &reports, &callback, cx);
+        }
     }))
 }
 
-/// Sizes closer than this are the same size. Layout is deterministic, so this
+fn report_layout(
+    id: u64,
+    bounds: gpui::Bounds<gpui::Pixels>,
+    reports: &SharedPaintReports,
+    callback: &EventCallback,
+    cx: &mut gpui::App,
+) {
+    let size = (
+        f32::from(bounds.size.width),
+        f32::from(bounds.size.height),
+    );
+    {
+        let mut reports = reports.borrow_mut();
+        let unchanged = reports.sizes.get(&id).is_some_and(|last| {
+            (last.0 - size.0).abs() < PAINT_REPORT_EPSILON
+                && (last.1 - size.1).abs() < PAINT_REPORT_EPSILON
+        });
+        if unchanged {
+            return;
+        }
+        reports.sizes.insert(id, size);
+    }
+    let callback = Some(callback.clone());
+    cx.defer(move |_| {
+        emit_event_full(&callback, id, "layout", |payload| {
+            payload.x = Some(f64::from(f32::from(bounds.origin.x)));
+            payload.y = Some(f64::from(f32::from(bounds.origin.y)));
+            payload.width = Some(f64::from(size.0));
+            payload.height = Some(f64::from(size.1));
+        });
+    });
+}
+
+fn report_scroll(
+    id: u64,
+    offset: gpui::Point<gpui::Pixels>,
+    reports: &SharedPaintReports,
+    callback: &EventCallback,
+    cx: &mut gpui::App,
+) {
+    let offset = (f32::from(offset.x), f32::from(offset.y));
+    {
+        let mut reports = reports.borrow_mut();
+        match reports.scrolls.get(&id).copied() {
+            // The first paint only sets the baseline.
+            None => {
+                reports.scrolls.insert(id, offset);
+                return;
+            }
+            Some(last)
+                if (last.0 - offset.0).abs() < PAINT_REPORT_EPSILON
+                    && (last.1 - offset.1).abs() < PAINT_REPORT_EPSILON =>
+            {
+                return;
+            }
+            Some(_) => {
+                reports.scrolls.insert(id, offset);
+            }
+        }
+    }
+    let callback = Some(callback.clone());
+    cx.defer(move |_| {
+        emit_event_full(&callback, id, "scrollChange", |payload| {
+            payload.scroll_x = Some(f64::from(offset.0));
+            payload.scroll_y = Some(f64::from(offset.1));
+        });
+    });
+}
+
+/// Values closer than this are the same value. Layout is deterministic, so this
 /// only absorbs float noise from fractional scale factors.
-const LAYOUT_EPSILON: f32 = 0.01;
+const PAINT_REPORT_EPSILON: f32 = 0.01;
 
 /// General-purpose event emitter. Builds a default EventPayload, lets the
 /// caller customize it via a closure, then sends it through the callback.

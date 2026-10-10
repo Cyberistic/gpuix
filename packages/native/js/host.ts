@@ -431,6 +431,16 @@ export interface HostProps {
   // ── Scroll events ──────────────────────────────────────────────
   onScroll?: (event: EventPayload) => void
 
+  /**
+   * The scroll offset of a `overflow: "scroll"` element changed, however it
+   * moved: wheel, scrollbar drag, `scrollTo`, `scrollIntoView`. `scrollX` and
+   * `scrollY` are the pair `getScrollOffset` returns: 0 at the start and
+   * negative as the content scrolls. The position at the first paint is not
+   * reported, only movement after it. Not for `<virtual-list>`; use
+   * `onVisibleRange`.
+   */
+  onScrollChange?: (event: EventPayload) => void
+
   // ── Layout events ──────────────────────────────────────────────
   /**
    * The element's border box, reported after the first paint and each time its
