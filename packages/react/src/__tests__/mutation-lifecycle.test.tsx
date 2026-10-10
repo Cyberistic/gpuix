@@ -71,6 +71,55 @@ describe("host config hideInstance", () => {
     hostConfig.unhideInstance(instance, props)
     expect(renderer.styles.at(-1)).toEqual(props.style)
   })
+
+  function hiddenFixture(props: Props) {
+    const renderer = recordingRenderer()
+    const container: Container = {
+      nativeRenderer: {},
+      renderer,
+      ids: { nextElementId: 0 },
+      eventHandlers: new Map(),
+      windowKeyEventHandlers: {},
+      windowKeyEventId: 0,
+      windowSelectionEventId: 0,
+    }
+    const instance = hostConfig.createInstance(
+      "div",
+      props,
+      container,
+      null as unknown as HostContext
+    )
+    return { renderer, instance }
+  }
+
+  it("keeps an element hidden when its style changes", () => {
+    const before: Props = { style: { width: 80, hover: { backgroundColor: "#a6e3a1" } } }
+    const after: Props = { style: { width: 120, hover: { backgroundColor: "#a6e3a1" } } }
+    const { renderer, instance } = hiddenFixture(before)
+
+    hostConfig.hideInstance(instance)
+    hostConfig.commitUpdate(instance, "div", before, after, null)
+    expect(renderer.styles.at(-1)).toEqual({ width: 120, visibility: "hidden" })
+
+    hostConfig.unhideInstance(instance, after)
+    expect(renderer.styles.at(-1)).toEqual(after.style)
+  })
+
+  it("does not resend an unchanged style while hidden", () => {
+    const { renderer, instance } = hiddenFixture({ style: { width: 80 } })
+    hostConfig.hideInstance(instance)
+    const sent = renderer.styles.length
+
+    hostConfig.commitUpdate(
+      instance,
+      "div",
+      { style: { width: 80 } },
+      { style: { width: 80 } },
+      null
+    )
+
+    expect(renderer.styles).toHaveLength(sent)
+  })
 })
 
 describeNative("mutation lifecycle", () => {

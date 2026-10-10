@@ -133,6 +133,49 @@ export function isReservedProp(name: string): boolean {
   return RESERVED_PROPS.has(name) || EVENT_PROP_NAMES.has(name)
 }
 
+/**
+ * Structural equality for the JSON values a mutation carries: styles and
+ * custom props. A key whose value is `undefined` counts as absent, because
+ * `JSON.stringify` drops it, so `{ color: undefined }` and `{}` reach Rust as
+ * the same payload and must compare equal here.
+ *
+ * Only plain objects, arrays and primitives are compared. A function or class
+ * instance is equal to itself and nothing else.
+ */
+export function sameMutationValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  // NaN serializes to null on both sides, and -0 to 0, so neither is a change.
+  if (typeof left === "number" && typeof right === "number") return left !== left && right !== right
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false
+  }
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false
+    for (let index = 0; index < left.length; index++) {
+      if (!sameMutationValue(left[index], right[index])) return false
+    }
+    return true
+  }
+  if (Array.isArray(right)) return false
+  const leftProto = Object.getPrototypeOf(left)
+  if (leftProto !== Object.prototype && leftProto !== null) return false
+  if (Object.getPrototypeOf(right) !== leftProto) return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  let defined = 0
+  for (const key in leftRecord) {
+    const value = leftRecord[key]
+    if (value === undefined) continue
+    defined++
+    if (!sameMutationValue(value, rightRecord[key])) return false
+  }
+  let rightDefined = 0
+  for (const key in rightRecord) {
+    if (rightRecord[key] !== undefined) rightDefined++
+  }
+  return defined === rightDefined
+}
+
 export function serializeCustomProp(
   value: object | string | number | boolean | null | undefined
 ): string | object | number | boolean | null {
