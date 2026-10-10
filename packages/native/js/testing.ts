@@ -70,6 +70,7 @@ interface NativeTestRendererApi extends NativeRenderer {
   getAutomationTree(): string
   getRetainedElementCount(): number
   getElementBounds(elementId: number): ElementBounds | null
+  getElementsAt(x: number, y: number): number[]
   clockPause(): number
   clockSet(nowMs: number): number
   clockFastForward(deltaMs: number): number
@@ -488,6 +489,11 @@ export class TestRenderer implements NativeRenderer {
 
   getElementBounds(elementId: number): ElementBounds | null {
     return this.native.getElementBounds(elementId)
+  }
+
+  /** Ids of the elements under the window point, topmost first. */
+  getElementsAt(x: number, y: number): number[] {
+    return this.native.getElementsAt(x, y)
   }
 
   clockPause(): number {

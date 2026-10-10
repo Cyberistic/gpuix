@@ -1152,6 +1152,18 @@ impl TestGpuixRenderer {
         Ok(crate::automation::get_bounds(id).map(crate::renderer::ElementBounds::from_painted))
     }
 
+    /// Ids under the window point, topmost first. See the live renderer.
+    #[napi]
+    pub fn get_elements_at(&self, x: f64, y: f64) -> Result<Vec<f64>> {
+        self.flush()?;
+        let tree = self.tree.lock().unwrap();
+        Ok(tree
+            .elements_at(x, y, &crate::automation::get_bounds)
+            .into_iter()
+            .map(|id| id as f64)
+            .collect())
+    }
+
     #[napi]
     pub fn clock_pause(&self) -> Result<f64> {
         with_test_state(|cx, window, view| {

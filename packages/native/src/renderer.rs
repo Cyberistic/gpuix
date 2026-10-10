@@ -1041,6 +1041,32 @@ impl GpuixRenderer {
         Err(Error::from_reason("Unsupported operating system"))
     }
 
+    fn elements_at(&self, x: f64, y: f64) -> Result<Vec<u64>> {
+        #[cfg(target_os = "macos")]
+        {
+            let tree = self.tree.lock().unwrap();
+            return Ok(tree.elements_at(x, y, &crate::automation::get_bounds));
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            let bounds = self.automation_bounds()?;
+            let tree = self.tree.lock().unwrap();
+            return Ok(tree.elements_at(x, y, &|id| bounds.get(&id).copied()));
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        {
+            let _ = (x, y);
+            Err(Error::from_reason("Unsupported operating system"))
+        }
+    }
+
     fn element_bounds(&self, id: u64) -> Result<Option<crate::automation::ElementBounds>> {
         #[cfg(target_os = "macos")]
         return Ok(crate::automation::get_bounds(id));
@@ -2307,6 +2333,19 @@ impl GpuixRenderer {
     pub fn get_element_bounds(&self, id: f64) -> Result<Option<ElementBounds>> {
         let id = to_element_id(id)?;
         Ok(self.element_bounds(id)?.map(ElementBounds::from_painted))
+    }
+
+    /// The elements whose last painted box holds the window point `(x, y)`,
+    /// topmost first, like the DOM's `elementsFromPoint`. An element that did
+    /// not paint is never listed, `overflow: hidden | scroll` clips what lies
+    /// outside it, and `pointer-events: none` is skipped.
+    #[napi]
+    pub fn get_elements_at(&self, x: f64, y: f64) -> Result<Vec<f64>> {
+        Ok(self
+            .elements_at(x, y)?
+            .into_iter()
+            .map(|id| id as f64)
+            .collect())
     }
 
     #[napi]

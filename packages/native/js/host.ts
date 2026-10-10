@@ -680,6 +680,7 @@ export type NativeRenderer = MutationHost &
       | "setWindowKeyEvents"
       | "setWindowSelectionChange"
       | "getElementBounds"
+      | "getElementsAt"
       | "scrollTo"
       | "scrollToItem"
       | "scrollIntoView"

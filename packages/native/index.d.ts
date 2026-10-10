@@ -171,6 +171,13 @@ export declare class GpuixRenderer {
   registerFont(data: Buffer): void
   getAutomationTree(): string
   getElementBounds(id: number): ElementBounds | null
+  /**
+   * The elements whose last painted box holds the window point `(x, y)`,
+   * topmost first, like the DOM's `elementsFromPoint`. An element that did
+   * not paint is never listed, `overflow: hidden | scroll` clips what lies
+   * outside it, and `pointer-events: none` is skipped.
+   */
+  getElementsAt(x: number, y: number): Array<number>
   getAllText(): Array<string>
   getPaintedText(): Array<string>
   /**
@@ -419,6 +426,8 @@ export declare class TestGpuixRenderer {
   getAutomationTree(): string
   /** Last painted bounds for an element, or null if it was not painted. */
   getElementBounds(id: number): ElementBounds | null
+  /** Ids under the window point, topmost first. See the live renderer. */
+  getElementsAt(x: number, y: number): Array<number>
   clockPause(): number
   clockSet(nowMs: number): number
   clockFastForward(deltaMs: number): number

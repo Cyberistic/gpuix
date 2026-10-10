@@ -2285,6 +2285,24 @@ const box = renderer.getElementBounds?.(ref.current.id)
 // { x, y, width, height }
 ```
 
+### Find what is under a point
+
+`getElementsAt(x, y)` returns the ids of the elements whose last painted box
+holds a window point, topmost first, like the DOM's `elementsFromPoint`. It
+works on the live `GpuixRenderer` and on the test renderer.
+
+```tsx
+const [topmost] = renderer.getElementsAt?.(event.x, event.y) ?? []
+```
+
+It answers from the last frame, so an element that did not paint (hidden, or
+outside a virtual list's window) is never listed. `overflow: hidden` and
+`scroll` clip what lies outside them, `pointer-events: none` is skipped (and
+inherited, until a child sets `auto`), and a deferred
+[`<anchored>`](#overlay-menus) layer comes first, ordered by `priority`,
+because gpui paints it after the tree and outside the clip of its ancestors.
+Beyond that, tree order is paint order: gpuix has no z-index.
+
 ### Button
 
 GPUIX has no native `<button>`, so a `div` with `onClick` is not reachable with
