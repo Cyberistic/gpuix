@@ -1762,7 +1762,10 @@ on the right edge, or the bottom for sideways scrolling, leaving the corner free
 when both show. It is painted from the scroll offset in the frame the content
 moves, so a wheel tick costs nothing beyond that frame. It is a drawing, not a
 control: it takes no pointer input, so it cannot be dragged. It applies to
-`overflow: 'scroll'` containers, not `<virtual-list>`.
+`overflow: 'scroll'` containers and to `<virtual-list>`. A list's thumb comes
+from the heights the list has measured (and `estimatedItemHeight` for rows it has
+not reached), the same totals it scrolls by, so it only runs along the right edge
+and its length settles as rows are measured.
 
 ### Give memory back when idle
 

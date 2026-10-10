@@ -119,3 +119,68 @@ describeNative("scrollbarColor", () => {
     expect(rows.length).toBe(20)
   })
 })
+
+describeNative("scrollbarColor on a <virtual-list>", () => {
+  /** 30 rows of 40px in a 160px list: 1200px of content. */
+  function shootList(scrollToRow?: number, scrollbarColor: string | null = THUMB) {
+    const { render, renderer, unmount } = createTestRoot()
+    try {
+      render(
+        <virtual-list
+          testId="list"
+          overdraw={0}
+          estimatedItemHeight={40}
+          style={{
+            width: 100,
+            height: 160,
+            backgroundColor: "#202020",
+            scrollbarColor: scrollbarColor ?? undefined,
+          }}
+        >
+          {Array.from({ length: 30 }, (_, index) => (
+            <div key={index} style={{ height: 40, flexShrink: 0 }} />
+          ))}
+        </virtual-list>
+      )
+      renderer.dispatchNativeEvents()
+      if (scrollToRow !== undefined) {
+        renderer.scrollToItem(renderer.findByTestId("list")!.id, scrollToRow)
+        renderer.flush()
+      }
+      const file = path.join(
+        SHOTS_DIR,
+        `scrollbar-list-${scrollToRow ?? "top"}-${scrollbarColor ? "on" : "off"}.png`
+      )
+      renderer.captureScreenshot(file)
+      const pixels = readPixels(file)
+      const rows: number[] = []
+      for (let y = 0; y < 160; y++) {
+        const [r, g, b] = pixels.at(97, y)
+        if (r > 200 && g < 60 && b < 60) rows.push(y)
+      }
+      return rows
+    } finally {
+      unmount()
+    }
+  }
+
+  it("paints a thumb at the top of a list that rests there", () => {
+    // 160px of 1200px is 21px of the track.
+    const rows = shootList()
+    expect(rows[0]).toBe(0)
+    expect(rows.length).toBeGreaterThanOrEqual(20)
+    expect(rows.length).toBeLessThanOrEqual(22)
+  })
+
+  it("moves the thumb down as the list scrolls", () => {
+    // 600px of the 1040px it can move: past the middle of the track.
+    const rows = shootList(15)
+    expect(rows[0]).toBeGreaterThan(70)
+    expect(rows[0]).toBeLessThan(90)
+    expect(shootList(29)[0]).toBeGreaterThan(rows[0]!)
+  })
+
+  it("paints nothing without a colour", () => {
+    expect(shootList(undefined, null)).toEqual([])
+  })
+})
