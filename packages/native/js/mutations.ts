@@ -103,6 +103,13 @@ export const EVENT_PROP_NAMES: ReadonlySet<string> = new Set(
   EVENT_PROPS.map(([name]) => name)
 )
 
+/**
+ * Event type for a handler prop. Adapters walk an element's own props and look
+ * each one up here, which beats testing every entry of `EVENT_PROPS` against an
+ * element that has two or three props.
+ */
+export const EVENT_TYPE_BY_PROP: ReadonlyMap<string, string> = new Map(EVENT_PROPS)
+
 export const RESERVED_PROPS: ReadonlySet<string> = new Set([
   "style",
   "className",

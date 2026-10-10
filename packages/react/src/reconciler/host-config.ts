@@ -6,9 +6,10 @@
 
 import { createContext } from "react"
 import { DefaultEventPriority } from "react-reconciler/constants.js"
+import type { HostEventHandler } from "@gpuix/native/host"
 import {
   BUILT_IN_TYPES,
-  EVENT_PROPS,
+  EVENT_TYPE_BY_PROP,
   isReservedProp,
   sameMutationValue,
   serializeCustomProp,
@@ -97,33 +98,60 @@ function nextId(container: Container): number {
 // ── Event wiring helpers ─────────────────────────────────────────────
 
 function syncEventListeners(container: Container, id: number, props: Props): void {
-  for (const [propName, eventType] of EVENT_PROPS) {
-    const handler = props[propName]
-    if (handler) {
-      registerEventHandler(container.eventHandlers, id, eventType, handler)
+  const record = props as Record<string, unknown>
+  for (const propName in record) {
+    const eventType = EVENT_TYPE_BY_PROP.get(propName)
+    const handler = record[propName]
+    if (eventType && handler) {
+      registerEventHandler(
+        container.eventHandlers,
+        id,
+        eventType,
+        handler as HostEventHandler
+      )
       container.renderer.setEventListener(id, eventType, true)
     }
   }
 }
 
+/**
+ * Walks the props an element has, not every event GPUIX knows: this runs for
+ * each re-rendered host element, and most have a few props and no handlers.
+ */
 function diffEventListeners(
   container: Container,
   id: number,
   oldProps: Props,
   newProps: Props
 ): void {
-  for (const [propName, eventType] of EVENT_PROPS) {
-    const oldHandler = oldProps[propName]
-    const newHandler = newProps[propName]
-
+  const previous = oldProps as Record<string, unknown>
+  const next = newProps as Record<string, unknown>
+  for (const propName in next) {
+    const eventType = EVENT_TYPE_BY_PROP.get(propName)
+    if (!eventType) continue
+    const oldHandler = previous[propName]
+    const newHandler = next[propName]
     if (oldHandler && !newHandler) {
       unregisterEventHandler(container.eventHandlers, id, eventType)
       container.renderer.setEventListener(id, eventType, false)
     } else if (newHandler && newHandler !== oldHandler) {
-      registerEventHandler(container.eventHandlers, id, eventType, newHandler)
+      registerEventHandler(
+        container.eventHandlers,
+        id,
+        eventType,
+        newHandler as HostEventHandler
+      )
       if (!oldHandler) {
         container.renderer.setEventListener(id, eventType, true)
       }
+    }
+  }
+  for (const propName in previous) {
+    if (propName in next) continue
+    const eventType = EVENT_TYPE_BY_PROP.get(propName)
+    if (eventType && previous[propName]) {
+      unregisterEventHandler(container.eventHandlers, id, eventType)
+      container.renderer.setEventListener(id, eventType, false)
     }
   }
 }
