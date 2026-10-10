@@ -5750,7 +5750,152 @@ pub(crate) fn build_host_container(
         };
     }
 
+    // Last, so the thumb paints over the content.
+    if let (Some(style), Some(handle)) = (style, ctx.scroll_handles.get(&element.id)) {
+        if let Some(color) = style
+            .scrollbar_color
+            .as_deref()
+            .and_then(crate::color::parse_color_rgba)
+        {
+            let along = |axis: Option<&str>| axis == Some("scroll");
+            el = el.child(scrollbar_overlay(
+                handle.clone(),
+                color.into(),
+                style.scrollbar_width.unwrap_or(SCROLLBAR_WIDTH as f64) as f32,
+                along(style.overflow_x.as_deref().or(style.overflow.as_deref())),
+                along(style.overflow_y.as_deref().or(style.overflow.as_deref())),
+            ));
+        }
+    }
+
     el.into_any_element()
+}
+
+/// A classic scrollbar's default thickness.
+const SCROLLBAR_WIDTH: f32 = 6.0;
+/// The shortest a thumb gets, however long the content.
+const MIN_SCROLLBAR_THUMB: f32 = 20.0;
+
+/// Where a thumb starts and how long it is along one axis, in the track's own
+/// coordinates. `track` is the viewport's extent, `max_scroll` how far the
+/// content can move, and `offset` how far it has (zero or negative). `None`
+/// when the content fits, so there is nothing to show.
+fn scrollbar_thumb(track: f32, max_scroll: f32, offset: f32) -> Option<(f32, f32)> {
+    if track <= 0.0 || max_scroll <= 1.0 {
+        return None;
+    }
+    let length = (track * track / (track + max_scroll)).clamp(MIN_SCROLLBAR_THUMB.min(track), track);
+    let progress = (-offset / max_scroll).clamp(0.0, 1.0);
+    Some((progress * (track - length), length))
+}
+
+/// The thumbs of a scroll container, painted from its own scroll offset in the
+/// frame the content moves in, so a wheel tick costs nothing beyond that frame.
+///
+/// It is the container's last child, absolutely placed over its padding box.
+/// Children of a scroller are painted shifted by the scroll offset, so the
+/// viewport is this box moved back by it. It has no hitbox and takes no input.
+fn scrollbar_overlay(
+    handle: gpui::ScrollHandle,
+    color: gpui::Hsla,
+    thickness: f32,
+    horizontal: bool,
+    vertical: bool,
+) -> gpui::AnyElement {
+    use gpui::prelude::*;
+
+    gpui::canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let offset = handle.offset();
+            let max = handle.max_offset();
+            let origin = bounds.origin - offset;
+            let (width, height) = (
+                f32::from(bounds.size.width),
+                f32::from(bounds.size.height),
+            );
+            let along = |show: bool, track: f32, max_scroll: gpui::Pixels, offset: gpui::Pixels| {
+                show.then(|| scrollbar_thumb(track, f32::from(max_scroll), f32::from(offset)))
+                    .flatten()
+            };
+            let mut across = along(vertical, height, max.y, offset.y);
+            let mut sideways = along(horizontal, width, max.x, offset.x);
+            if across.is_some() && sideways.is_some() {
+                // Leave the corner to whichever thumb reaches it first.
+                across = along(vertical, height - thickness, max.y, offset.y);
+                sideways = along(horizontal, width - thickness, max.x, offset.x);
+            }
+            let paint = |window: &mut gpui::Window, x: f32, y: f32, w: f32, h: f32| {
+                // Whole pixels, so a thumb is as crisp as a browser's.
+                let rect = gpui::Bounds::new(
+                    gpui::point(origin.x + gpui::px(x.round()), origin.y + gpui::px(y.round())),
+                    gpui::size(gpui::px(w.round()), gpui::px(h.round())),
+                );
+                window.paint_quad(gpui::quad(
+                    rect,
+                    gpui::px(thickness / 2.0),
+                    color,
+                    gpui::px(0.0),
+                    gpui::transparent_black(),
+                    gpui::BorderStyle::default(),
+                ));
+            };
+            if let Some((start, length)) = across {
+                paint(window, width - thickness, start, thickness, length);
+            }
+            if let Some((start, length)) = sideways {
+                paint(window, start, height - thickness, length, thickness);
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+#[cfg(test)]
+mod scrollbar_tests {
+    use super::scrollbar_thumb;
+
+    #[test]
+    fn a_thumb_is_the_viewports_share_of_the_content() {
+        // 100 of 300: a third of the track.
+        let (start, length) = scrollbar_thumb(100.0, 200.0, 0.0).unwrap();
+        assert_eq!(start, 0.0);
+        assert!((length - 100.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_thumb_runs_the_whole_track_as_the_content_runs_its_distance() {
+        let (_, length) = scrollbar_thumb(100.0, 200.0, 0.0).unwrap();
+        let (start, same_length) = scrollbar_thumb(100.0, 200.0, -200.0).unwrap();
+        assert_eq!(length, same_length);
+        assert!((start + length - 100.0).abs() < 0.01, "ends at the end of the track");
+        let (halfway, _) = scrollbar_thumb(100.0, 200.0, -100.0).unwrap();
+        assert!((halfway - (100.0 - length) / 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_thumb_stays_inside_the_track_when_the_offset_overshoots() {
+        let (start, length) = scrollbar_thumb(100.0, 200.0, -450.0).unwrap();
+        assert!((start + length - 100.0).abs() < 0.01);
+        assert_eq!(scrollbar_thumb(100.0, 200.0, 30.0).unwrap().0, 0.0);
+    }
+
+    #[test]
+    fn a_thumb_is_never_shorter_than_a_grabbable_length_nor_longer_than_the_track() {
+        assert_eq!(scrollbar_thumb(100.0, 100_000.0, 0.0).unwrap().1, 20.0);
+        assert_eq!(scrollbar_thumb(10.0, 100_000.0, 0.0).unwrap().1, 10.0);
+    }
+
+    #[test]
+    fn content_that_fits_has_no_thumb() {
+        assert_eq!(scrollbar_thumb(100.0, 0.0, 0.0), None);
+        assert_eq!(scrollbar_thumb(100.0, 0.5, 0.0), None, "a fraction of a pixel is rounding");
+        assert_eq!(scrollbar_thumb(0.0, 200.0, 0.0), None);
+    }
 }
 
 /// A selectable text run owned by `element`. Runs are left to gpui so the

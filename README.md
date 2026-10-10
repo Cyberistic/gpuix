@@ -1744,6 +1744,26 @@ that height. An explicit `height` still overrides both.
 />
 ```
 
+### Scrollbars
+
+A container with `overflow: 'scroll'` scrolls but draws no scrollbar. Give it a
+`scrollbarColor` and gpuix paints a thumb over its content, on each axis that has
+more to show:
+
+```tsx
+<div style={{ height: 300, overflow: 'scroll', scrollbarColor: '#8884', scrollbarWidth: 6 }}>
+  {rows}
+</div>
+```
+
+`scrollbarWidth` is the thickness in px and defaults to 6. The thumb is as long
+as the viewport is of the content (never under 20px), fully rounded, and sits
+on the right edge, or the bottom for sideways scrolling, leaving the corner free
+when both show. It is painted from the scroll offset in the frame the content
+moves, so a wheel tick costs nothing beyond that frame. It is a drawing, not a
+control: it takes no pointer input, so it cannot be dragged. It applies to
+`overflow: 'scroll'` containers, not `<virtual-list>`.
+
 ### Give memory back when idle
 
 A JavaScript engine collects on allocation pressure, so after a burst of work

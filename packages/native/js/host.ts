@@ -205,6 +205,12 @@ export interface StyleDesc {
   overflow?: string
   overflowX?: string
   overflowY?: string
+  /** Colour of the scrollbar thumb. Setting it paints a native thumb over a container
+   *  that scrolls (`overflow: "scroll"`), on each axis that has more to show. The
+   *  thumb follows the scroll offset in the frame it paints, and takes no pointer input. */
+  scrollbarColor?: string
+  /** Thickness of that thumb in px. Defaults to 6. */
+  scrollbarWidth?: number
 
   cursor?: CursorValue
   /** `"auto"` blocks hits behind this element **and its wheel**. `"none"` never

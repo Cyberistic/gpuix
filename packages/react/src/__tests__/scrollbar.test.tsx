@@ -1,0 +1,121 @@
+import path from "path"
+import { describe, expect, it } from "vitest"
+import { createTestRoot, hasNativeTestRenderer } from "../testing.js"
+import { readPixels, SHOTS_DIR } from "./test-utils.js"
+
+const describeNative = hasNativeTestRenderer ? describe : describe.skip
+
+const THUMB = "#ff0000"
+
+/** Rows (within the scroller's 100px) holding thumb-coloured pixels in a column. */
+function thumbRows(pixels: ReturnType<typeof readPixels>, x: number, top = 0) {
+  const rows: number[] = []
+  for (let y = 0; y < 100; y++) {
+    const [r, g, b] = pixels.at(x, top + y)
+    if (r > 200 && g < 60 && b < 60) rows.push(y)
+  }
+  return rows
+}
+
+function shoot(
+  contentHeight: number,
+  scrollTo?: number,
+  scroller: Record<string, unknown> = {}
+) {
+  const { render, renderer, unmount } = createTestRoot()
+  try {
+    render(
+      <div
+        testId="scroller"
+        style={{
+          width: 100,
+          height: 100,
+          overflow: "scroll",
+          scrollbarColor: THUMB,
+          ...scroller,
+        }}
+      >
+        <div style={{ width: 100, height: contentHeight, backgroundColor: "#202020" }} />
+      </div>
+    )
+    renderer.dispatchNativeEvents()
+    if (scrollTo !== undefined) {
+      renderer.scrollTo(renderer.findByTestId("scroller")!.id, 0, -scrollTo)
+      renderer.flush()
+    }
+    const file = path.join(SHOTS_DIR, `scrollbar-${contentHeight}-${scrollTo ?? "top"}.png`)
+    renderer.captureScreenshot(file)
+    return readPixels(file)
+  } finally {
+    unmount()
+  }
+}
+
+describeNative("scrollbarColor", () => {
+  it("paints a thumb along the right edge, as long as the viewport is of the content", () => {
+    // 100px of a 300px content: a third of the track.
+    const rows = thumbRows(shoot(300), 97)
+    expect(rows[0]).toBe(0)
+    expect(rows.at(-1)).toBe(32)
+    expect(thumbRows(shoot(300), 80), "only along the edge").toEqual([])
+    expect(thumbRows(shoot(300), 93), "6px wide: x 94 to 99").toEqual([])
+    expect(thumbRows(shoot(300), 94).length).toBeGreaterThan(0)
+  })
+
+  it("follows the scroll offset", () => {
+    const rows = thumbRows(shoot(300, 200), 97)
+    expect(rows[0]).toBe(67)
+    expect(rows.at(-1)).toBe(99)
+    const middle = thumbRows(shoot(300, 100), 97)
+    expect(middle[0]).toBeGreaterThan(25)
+    expect(middle[0]).toBeLessThan(45)
+  })
+
+  it("paints nothing when the content fits", () => {
+    expect(thumbRows(shoot(80), 97)).toEqual([])
+  })
+
+  it("is off without a colour, and takes the thickness from scrollbarWidth", () => {
+    expect(thumbRows(shoot(300, undefined, { scrollbarColor: undefined }), 97)).toEqual([])
+    const wide = shoot(300, undefined, { scrollbarWidth: 12 })
+    expect(thumbRows(wide, 89).length, "12px wide: x 88 to 99").toBeGreaterThan(0)
+    expect(thumbRows(wide, 87)).toEqual([])
+  })
+
+  it("draws a thumb along the bottom for sideways scrolling, and leaves the corner when both show", () => {
+    const { render, renderer, unmount } = createTestRoot()
+    try {
+      render(
+        <div
+          style={{ width: 100, height: 100, overflow: "scroll", scrollbarColor: THUMB, scrollbarWidth: 6 }}
+        >
+          <div style={{ width: 300, height: 300, backgroundColor: "#202020" }} />
+        </div>
+      )
+      renderer.dispatchNativeEvents()
+      const file = path.join(SHOTS_DIR, "scrollbar-both.png")
+      renderer.captureScreenshot(file)
+      const pixels = readPixels(file)
+      const isThumb = (x: number, y: number) => {
+        const [r, g, b] = pixels.at(x, y)
+        return r > 200 && g < 60 && b < 60
+      }
+      // Vertical thumb: the right edge, from the top, stopping short of the corner.
+      const down = Array.from({ length: 100 }, (_, y) => y).filter((y) => isThumb(97, y))
+      // Horizontal thumb: the bottom edge, from the left, stopping short of the corner.
+      const across = Array.from({ length: 100 }, (_, x) => x).filter((x) => isThumb(x, 97))
+      expect(down[0]).toBe(0)
+      expect(across[0]).toBe(0)
+      expect(down.at(-1)).toBeLessThan(94)
+      expect(across.at(-1)).toBeLessThan(94)
+      expect(isThumb(97, 97), "the corner stays free").toBe(false)
+    } finally {
+      unmount()
+    }
+  })
+
+  it("never shortens a thumb below a grabbable length", () => {
+    const rows = thumbRows(shoot(5000), 97)
+    expect(rows.length).toBe(20)
+  })
+})
