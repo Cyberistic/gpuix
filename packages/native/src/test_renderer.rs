@@ -455,6 +455,24 @@ impl TestGpuixRenderer {
         })
     }
 
+    /// Simulate the pointer leaving the window, as the platform reports it when
+    /// the cursor crosses the window edge: there is no final mouse move.
+    #[napi]
+    pub fn simulate_mouse_exit(&self, x: f64, y: f64) -> Result<()> {
+        with_test_state(|cx, window, _view| {
+            simulate_event_with_view_lease(
+                cx,
+                window,
+                gpui::MouseExitEvent {
+                    position: gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                },
+            );
+            Ok(())
+        })
+    }
+
     /// Focus an element by its numeric ID.
     /// The element must have a FocusHandle (created by sync_focus_handles when
     /// the element has keyDown, keyUp, focus, or blur listeners).

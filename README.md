@@ -3056,6 +3056,9 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
 automatically. A listener alone does not put a `div` in the Tab order; add
 `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
 
+`onMouseLeave` also fires when the pointer leaves the **window** without a final
+move over the element, and the element's `hover` style ends with it.
+
 A node that listens for both `onMouseDown` and `onMouseMove` **captures the
 pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
 `onMouseMove` and `onMouseUp` keep firing after the pointer leaves the hitbox,

@@ -61,6 +61,7 @@ interface NativeTestRendererApi extends NativeRenderer {
     pressedButton?: number,
     modifiers?: string
   ): void
+  simulateMouseExit(x: number, y: number): void
   simulateMouseDown(x: number, y: number, button: number, modifiers?: string): void
   simulateMouseUp(x: number, y: number, button: number, modifiers?: string): void
   simulateFileDrop(x: number, y: number, paths: string[]): void
@@ -354,6 +355,15 @@ export class TestRenderer implements NativeRenderer {
     this.dispatchNativeEvents()
     // Flush again after framework state updates so hover styles are applied
     // and the Rust tree is current before any screenshot.
+    this.native.flush()
+  }
+
+  /** End-to-end: the pointer leaves the window at (x, y), the way the platform
+   *  reports it, with no mouse move after the last position inside. */
+  nativeSimulateMouseExit(x: number, y: number): void {
+    this.native.flush()
+    this.native.simulateMouseExit(x, y)
+    this.dispatchNativeEvents()
     this.native.flush()
   }
 
