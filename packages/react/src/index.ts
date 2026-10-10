@@ -1,5 +1,6 @@
 // GPUIX React - React bindings for GPUI
 export { createRoot, flushSync } from "./reconciler/index.js"
+export { createPortal } from "./reconciler/portal.js"
 export {
   createRenderer,
   enableAutomation,

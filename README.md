@@ -2209,6 +2209,38 @@ A filled child of a click target (switch thumb, radio dot, check icon) needs
 **`pointerEvents: "none"`**, or it eats the parent's click. For Select and
 Combobox rows, use the item primitive's `asChild` prop instead.
 
+### Portals
+
+`createPortal(children, target)` mounts `children` as the children of an element
+that is already mounted, wherever the calling component sits in the tree. Use it
+for a toast layer, a drag preview, or any content that belongs to another part of
+the window. Context still flows from the caller, as in React DOM.
+
+Take `target` from a `ref` and render the portal once it is set. A portal into an
+element that has not mounted has nowhere to attach.
+
+```tsx
+import { createPortal, type PublicInstance } from '@gpuix/react'
+
+function Screen() {
+  const [layer, setLayer] = useState<PublicInstance | null>(null)
+  return (
+    <>
+      <div ref={setLayer} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
+      <Sidebar>{layer && createPortal(<Toast />, layer)}</Sidebar>
+    </>
+  )
+}
+```
+
+The portal's children are appended after whatever the target already holds, and
+React keeps them in key order among themselves. `target` must belong to the same
+root as the component that calls `createPortal`.
+
+For floating menus that must paint above a `<virtual-list>`, use
+[`<anchored>`](#overlay-menus) rather than a portal: a portal changes where
+elements live in the tree, not the order gpui paints them in.
+
 ### Measure an element
 
 `getElementBounds(id)` returns the last painted box, or `null` if that node did

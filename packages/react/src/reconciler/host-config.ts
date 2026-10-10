@@ -280,6 +280,26 @@ function materialize(node: HostNode): HostNodeState {
   return state
 }
 
+const portalContainers = new WeakMap<Instance, Container>()
+
+/**
+ * The container a portal into `target` mounts through.
+ *
+ * Cached per target because React compares a portal's `containerInfo` by
+ * identity, and a new object on every render would unmount and remount the
+ * portal's whole subtree.
+ */
+export function portalContainerFor(target: Instance): Container {
+  let container = portalContainers.get(target)
+  if (!container) {
+    container = Object.assign(Object.create(stateFor(target).container) as Container, {
+      portalTarget: target,
+    })
+    portalContainers.set(target, container)
+  }
+  return container
+}
+
 // ── Host config ──────────────────────────────────────────────────────
 
 export const hostConfig = {
@@ -338,11 +358,19 @@ export const hostConfig = {
     parentState.container.renderer.insertBefore(parent.id, child.id, beforeChild.id)
   },
 
+  // A window's root has one child, so there is nothing to order. A portal's
+  // children share their target with whatever else it holds, and React places
+  // one before another whenever their keys reorder.
   insertInContainerBefore(
-    _parent: Container,
-    _child: Instance,
-    _beforeChild: Instance
-  ): void {},
+    container: Container,
+    child: Instance,
+    beforeChild: Instance
+  ): void {
+    const target = container.portalTarget
+    if (!target) return
+    materialize(child)
+    container.renderer.insertBefore(target.id, child.id, beforeChild.id)
+  },
 
   removeChildFromContainer(parent: Container, child: Instance): void {
     const destroyed = parent.renderer.destroyElement(child.id)
@@ -458,7 +486,13 @@ export const hostConfig = {
 
   appendChildToContainer(container: Container, child: Instance): void {
     materialize(child)
-    container.renderer.setRoot(child.id)
+    const target = container.portalTarget
+    if (target) {
+      materialize(target)
+      container.renderer.appendChild(target.id, child.id)
+    } else {
+      container.renderer.setRoot(child.id)
+    }
   },
 
   appendInitialChild(parent: Instance, child: Instance | TextInstance): void {
