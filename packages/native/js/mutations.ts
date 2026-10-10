@@ -3,6 +3,17 @@ import type { MutationHost, MutationRenderer } from "./host.js"
 export type MutationValue = number | string | boolean | object | null
 export type MutationTuple = [string, ...MutationValue[]]
 
+let appliedBatches = 0
+
+/**
+ * How many batches of mutations have reached a renderer, across every queue.
+ * It moves whenever the tree changes, which makes it the signal that an app is
+ * still working: `collectGarbageWhenIdle` waits for it to hold still.
+ */
+export function appliedBatchCount(): number {
+  return appliedBatches
+}
+
 /** Atomic mutation queue shared by all framework adapters. */
 export interface MutationQueue extends MutationRenderer {
   readonly pending: number
@@ -65,6 +76,7 @@ export function createMutationQueue(
     flushMutations() {
       flushScheduled = false
       if (queue.length === 0) return
+      appliedBatches++
       const destroyed = renderer.applyBatch(JSON.stringify(queue))
       onDestroyed(destroyed)
       queue = []

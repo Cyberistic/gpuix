@@ -1744,6 +1744,26 @@ that height. An explicit `height` still overrides both.
 />
 ```
 
+### Give memory back when idle
+
+A JavaScript engine collects on allocation pressure, so after a burst of work
+(the first mount, opening a long thread) the heap stays at its peak until the
+next burst. `collectGarbageWhenIdle()` runs one full collection once the app has
+stopped committing for a while, then waits for the next burst.
+
+```tsx
+import { collectGarbageWhenIdle } from '@gpuix/react'
+
+const stop = collectGarbageWhenIdle() // checks every 5s, collects after two quiet checks
+```
+
+It uses `Bun.gc(true)`, or `gc()` where Node runs with `--expose-gc`, and does
+nothing in a runtime that has neither. Quiet means no mutation batch reached a
+renderer and the process is under half a core. The batch count decides, not CPU
+alone, because a focused text field blinks its caret in native code and redraws
+twice a second. Pass `activity`, `collect`, `checkMs`, `quietChecks` or
+`busyCpu` to change what it watches or how often.
+
 ### Input in a search pill
 
 `<input>` has **no default inner padding** and paints text at the top of its

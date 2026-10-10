@@ -166,6 +166,8 @@ export {
   readMacCpuThrottle,
 } from "./cpu-throttle.js"
 export type { MacCpuThrottle } from "./cpu-throttle.js"
+export { collectGarbageWhenIdle } from "./idle-gc.js"
+export type { IdleGcOptions } from "./idle-gc.js"
 export type {
   EventPayload,
   EventModifiers,
