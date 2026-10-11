@@ -655,6 +655,47 @@ cd ../../examples
 bun --hot counter.tsx
 ```
 
+### Windows ARM64 source builds
+
+**ARM64 builds are local only.** Published Windows packages and CI currently
+target x64. Use ARM64 Node.js and Bun when loading a locally built ARM64 addon.
+
+In Visual Studio Installer, install **Desktop development with C++**, the
+ARM64 MSVC tools, a Windows SDK, C++ Clang tools, and CMake. Open a developer
+PowerShell with those tools available. [ring requires Clang for Windows ARM64](https://github.com/briansmith/ring/blob/main/BUILDING.md).
+
+If `clang` is not on `PATH`, add Visual Studio's ARM64 LLVM directory:
+
+```powershell
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vs = & $vswhere -latest -products '*' -property installationPath
+$llvm = Join-Path $vs 'VC\Tools\Llvm\ARM64\bin'
+if (!(Test-Path "$llvm\clang.exe")) { throw 'Install the ARM64 Clang tools in Visual Studio Installer' }
+$env:PATH = "$llvm;$env:PATH"
+
+node -p 'process.arch' # must print arm64
+bun -p 'process.arch'  # must print arm64
+clang --version
+cmake --version
+
+rustup target add aarch64-pc-windows-msvc
+$env:CARGO_BUILD_TARGET = 'aarch64-pc-windows-msvc'
+bun install
+Push-Location packages/native
+bun run build
+Pop-Location
+Push-Location packages/react
+bun run build
+Pop-Location
+Push-Location packages/solid
+bun run build
+Pop-Location
+```
+
+Run these commands from a repository checkout with the pinned `zed/` submodule
+already initialized, as in the build steps above. Matching runtime and addon
+architectures is required; renaming an x64 binary does not make it ARM64.
+
 ## Usage
 
 ```tsx
