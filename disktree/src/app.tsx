@@ -620,16 +620,28 @@ interface PanelProps {
   onOpen: (crumbs: number[]) => void
   /** Go to the parent and select it, so it is on screen. */
   onShow: (crumbs: number[]) => void
-  onReveal: (crumbs: number[]) => void
 }
 
-function nodePath(state: DisktreeState, tree: TreeNode, crumbs: number[]): string {
-  return path.join(state.root, ...resolveChain(tree, crumbs).slice(1).map((node) => node.name))
-}
-
-function SidePanel({ state, tree, target, current, metric, insights, onOpen, onShow, onReveal }: PanelProps) {
+function SidePanel({ state, tree, target, current, metric, insights, onOpen, onShow }: PanelProps) {
   const node = resolve(tree, target) ?? tree
-  const full = nodePath(state, tree, target)
+  const full = path.join(state.root, ...resolveChain(tree, target).slice(1).map((node) => node.name))
+  const [revealError, setRevealError] = useState<{ path: string; message: string } | null>(null)
+  const revealLabel = process.platform === 'darwin' ? 'Show in Finder'
+    : process.platform === 'win32' ? 'Show in Explorer' : 'Show in File Manager'
+  const reveal = () => {
+    setRevealError(null)
+    const command = process.platform === 'darwin' ? 'open'
+      : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open'
+    const args = process.platform === 'darwin' ? ['-R', full]
+      : process.platform === 'win32' ? [`/select,"${full}"`] : [node.dir ? full : path.dirname(full)]
+    const child = spawn(command, args, {
+      stdio: 'ignore',
+      detached: true,
+      windowsVerbatimArguments: process.platform === 'win32',
+    })
+    child.once('error', (error) => setRevealError({ path: full, message: error.message }))
+    child.unref()
+  }
   const [number, unit] =
     metric === 'files' ? [humanCount(node.files), 'files'] : humanBytes(valueOf(node, metric)).split(' ')
   const share = valueOf(node, metric) / Math.max(1, valueOf(tree, metric))
@@ -693,8 +705,13 @@ function SidePanel({ state, tree, target, current, metric, insights, onOpen, onS
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {node.dir && !isCurrent ? <PlainButton testId="open" label="Open" primary onClick={() => onOpen(target)} /> : null}
-          <PlainButton testId="reveal" label="Show in Finder" onClick={() => onReveal(target)} />
+          <PlainButton testId="reveal" label={revealLabel} onClick={reveal} />
         </div>
+        {revealError?.path === full ? (
+          <text testId="reveal-error" style={{ fontSize: TEXT.caption, color: HIGHLIGHT }}>
+            {`Could not open file manager: ${revealError.message}`}
+          </text>
+        ) : null}
       </div>
 
       <div style={{ height: 1, backgroundColor: HAIRLINE, flexShrink: 0 }} />
@@ -848,10 +865,6 @@ export function DisktreeApp({ store, width, height }: DisktreeAppProps) {
   const up = () => {
     if (!nav.crumbs.length) return
     update({ crumbs: nav.crumbs.slice(0, -1), selected: nav.crumbs, hovered: null })
-  }
-  const reveal = (crumbs: number[]) => {
-    if (!tree) return
-    spawn('open', ['-R', nodePath(state, tree, crumbs)], { stdio: 'ignore', detached: true }).unref()
   }
   const rescan = (includeHidden = state.includeHidden) => void store.rescan(includeHidden)
 
@@ -1134,7 +1147,6 @@ export function DisktreeApp({ store, width, height }: DisktreeAppProps) {
             insights={insights}
             onOpen={open}
             onShow={show}
-            onReveal={reveal}
           />
         ) : (
           <div style={{ width: PANEL_WIDTH, flexShrink: 0, borderRadius: 12, backgroundColor: CARD }} />

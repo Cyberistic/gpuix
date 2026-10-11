@@ -29,7 +29,7 @@ render(<DisktreeApp store={store} />, {
   height: 840,
   minWidth: 1100,
   minHeight: 600,
-  titlebarTransparent: true,
+  titlebarTransparent: process.platform !== 'win32',
   windowBackground: 'blurred',
   trafficLightX: 18,
   trafficLightY: 20,

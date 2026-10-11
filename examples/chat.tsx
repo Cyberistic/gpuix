@@ -2477,7 +2477,7 @@ if (isEntryPoint) {
     title: 'GPUIX Chat · 1,000 messages',
     width: 1180,
     height: 820,
-    titlebarTransparent: true,
+    titlebarTransparent: process.platform !== 'win32',
     windowBackground: 'blurred',
     trafficLightX: 16,
     trafficLightY: 17,

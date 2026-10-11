@@ -77,8 +77,9 @@ describeNative('disktree', () => {
     // Path and free space differ per machine; the rest is fixed by the fixture.
     const panel = (await app.getByTestId('panel').textContent())
       .replace(displayPath(path.join(root, 'node_modules')), '…')
+      .replace(/Show in (Finder|Explorer)/, 'Show in File Manager')
       .replace(/DISK.*/, '')
-    expect(panel).toMatchInlineSnapshot(`"SELECTIONnode_modules…3.5MiBOF SCAN68%FILES3LAST WRITEjust nowKINDCache · reinstallableShow in FinderWORTH A LOOK4.5 MiBnode_modulesreinstallable3.5 MiB.cacheregenerable1.0 MiB"`)
+    expect(panel).toMatchInlineSnapshot(`"SELECTIONnode_modules…3.5MiBOF SCAN68%FILES3LAST WRITEjust nowKINDCache · reinstallableShow in File ManagerWORTH A LOOK4.5 MiBnode_modulesreinstallable3.5 MiB.cacheregenerable1.0 MiB"`)
     expect(await app.getByTestId('crumb-0').textContent()).toBe('node_modules')
     await app.screenshot({ path: path.join(SHOTS, 'node-modules.png') })
 

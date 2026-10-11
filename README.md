@@ -347,6 +347,15 @@ The archive keeps the executable bit, so there is no `chmod` step. macOS may sti
 
 On Windows, download `example-chat-x86_64-pc-windows-msvc.exe` and double-click it. On Linux, the file is `example-chat-x86_64-unknown-linux-gnu.tar.gz`.
 
+The chat and disktree desktop examples keep the native Windows title bar for
+dragging, minimizing, maximizing, and closing the window. Other platforms keep
+their existing custom chrome.
+
+disktree reveals the selection in Finder on macOS or Explorer on Windows.
+On Linux it opens the selected folder, or a file's parent folder, with
+`xdg-open`. A file-manager launch failure appears in the selection panel
+without stopping the app.
+
 The web example bundles the same React app and reconciler as the desktop chat
 example. wasm-bindgen exposes mutations and event callbacks to the existing
 retained tree and `GpuixView`, which run through GPUI's browser platform.
