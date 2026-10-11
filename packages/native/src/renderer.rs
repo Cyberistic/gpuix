@@ -27,7 +27,6 @@ use napi::JsDeferred;
 use napi_derive::napi;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-#[cfg(any(target_os = "macos", target_family = "wasm"))]
 use std::rc::Rc;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 use std::sync::atomic::{AtomicBool, Ordering};
