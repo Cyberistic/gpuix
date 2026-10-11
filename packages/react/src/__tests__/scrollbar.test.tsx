@@ -45,7 +45,7 @@ function shoot(
     }
     const file = path.join(SHOTS_DIR, `scrollbar-${contentHeight}-${scrollTo ?? "top"}.png`)
     renderer.captureScreenshot(file)
-    return readLogicalPixels(file)
+    return readLogicalPixels(file, renderer)
   } finally {
     unmount()
   }
@@ -95,7 +95,7 @@ describeNative("scrollbarColor", () => {
       renderer.dispatchNativeEvents()
       const file = path.join(SHOTS_DIR, "scrollbar-both.png")
       renderer.captureScreenshot(file)
-      const pixels = readLogicalPixels(file)
+      const pixels = readLogicalPixels(file, renderer)
       const isThumb = (x: number, y: number) => {
         const [r, g, b] = pixels.at(x, y)
         return r > 200 && g < 60 && b < 60
@@ -152,7 +152,7 @@ describeNative("scrollbarColor on a <virtual-list>", () => {
         `scrollbar-list-${scrollToRow ?? "top"}-${scrollbarColor ? "on" : "off"}.png`
       )
       renderer.captureScreenshot(file)
-      const pixels = readLogicalPixels(file)
+      const pixels = readLogicalPixels(file, renderer)
       const rows: number[] = []
       for (let y = 0; y < 160; y++) {
         const [r, g, b] = pixels.at(97, y)
@@ -209,7 +209,7 @@ describeNative("scrollbarColor on a <virtual-list>", () => {
       renderer.dispatchNativeEvents()
       const file = path.join(SHOTS_DIR, "scrollbar-list-tall-rows.png")
       renderer.captureScreenshot(file)
-      const pixels = readLogicalPixels(file)
+      const pixels = readLogicalPixels(file, renderer)
       const rows: number[] = []
       for (let y = 0; y < 400; y++) {
         const [r, g, b] = pixels.at(97, y)
@@ -253,7 +253,7 @@ describeNative("padding on a <virtual-list>", () => {
       renderer.dispatchNativeEvents()
       const file = path.join(SHOTS_DIR, "scrollbar-list-padded.png")
       renderer.captureScreenshot(file)
-      const pixels = readLogicalPixels(file)
+      const pixels = readLogicalPixels(file, renderer)
       const rows = { left: Infinity, right: -Infinity, top: Infinity }
       let thumbX = -1
       for (let y = 0; y < 160; y++) {

@@ -104,8 +104,8 @@ describeNative("checkUpdate()", () => {
       process.platform === "darwin"
         ? "My App.app.tar.gz"
         : process.platform === "win32"
-          ? "app_0.2.0_x64-setup.exe"
-          : "app_0.2.0_x86_64.AppImage"
+          ? `app_0.2.0_${process.arch === "arm64" ? "arm64" : "x64"}-setup.exe`
+          : `app_0.2.0_${process.arch === "arm64" ? "aarch64" : "x86_64"}.AppImage`
     let origin = ""
     const server = await listen((req, res) => {
       if (req.url === "/" || req.url === "/repos/OWNER/REPO/releases/latest") {

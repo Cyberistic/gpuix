@@ -1160,7 +1160,7 @@ describeNative("floating controls", () => {
   })
 
   it("sizes the Dialog portal to the window natively", () => {
-    // Not the 1280x800 default, and no JS reads the window size: native must.
+    // No component reads the window size: native must fill the actual viewport.
     const root = createTestRoot({ width: 900, height: 500 })
     root.render(
       <DialogPrimitive.Root defaultOpen>
@@ -1171,32 +1171,24 @@ describeNative("floating controls", () => {
       </DialogPrimitive.Root>
     )
     const bounds = (testId) => root.renderer.getElementBounds(root.renderer.findByTestId(testId).id)
+    // Windows substitutes display defaults for the offscreen window bounds.
+    const { width, height } = root.renderer.getWindowSize()
+    const viewport = { x: 0, y: 0, width, height }
     expect({
       portal: bounds("portal"),
       backdrop: bounds("backdrop"),
       popup: bounds("popup"),
-    }).toMatchInlineSnapshot(`
-      {
-        "backdrop": {
-          "height": 500,
-          "width": 900,
-          "x": 0,
-          "y": 0,
-        },
-        "popup": {
-          "height": 100,
-          "width": 200,
-          "x": 350,
-          "y": 200,
-        },
-        "portal": {
-          "height": 500,
-          "width": 900,
-          "x": 0,
-          "y": 0,
-        },
-      }
-    `)
+    }).toEqual({
+      portal: viewport,
+      backdrop: viewport,
+      popup: {
+        width: 200,
+        height: 100,
+        // GPUI snaps half-pixel layout midpoints toward zero.
+        x: Math.floor((width - 200) / 2),
+        y: Math.floor((height - 100) / 2),
+      },
+    })
     root.unmount()
   })
 

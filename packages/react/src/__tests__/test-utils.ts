@@ -5,6 +5,7 @@ import zlib from "zlib"
 import path from "path"
 import { fileURLToPath } from "url"
 import { expect } from "vitest"
+import type { TestRenderer } from "../testing.js"
 
 export const isCI = !!process.env.CI
 
@@ -131,19 +132,16 @@ export function readPixels(file: string): Pixels {
   }
 }
 
-/** The test window's width in logical pixels (`DEFAULT_WINDOW_WIDTH` in the
- *  native test renderer). On a 2x display the window captures twice that. */
-const TEST_WINDOW_WIDTH = 1280
-
 /** `readPixels` addressed in logical pixels, the units styles are written in,
  *  sampling the centre of each. The same geometry reads the same on a 1x and
  *  a 2x display. */
-export function readLogicalPixels(file: string): Pixels {
+export function readLogicalPixels(file: string, renderer: TestRenderer): Pixels {
   const pixels = readPixels(file)
-  const scale = pixels.width / TEST_WINDOW_WIDTH
+  const { width, height } = renderer.getWindowSize()
+  const scale = pixels.width / width
   return {
-    width: pixels.width / scale,
-    height: pixels.height / scale,
+    width,
+    height,
     at: (x, y) =>
       pixels.at(Math.floor((x + 0.5) * scale), Math.floor((y + 0.5) * scale)),
   }
