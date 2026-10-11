@@ -616,6 +616,9 @@ toolchain and no submodule.
 2. Node.js 18+
 3. Xcode with Metal Toolchain (macOS)
 
+The `cli/` and `disktree/` builds use Node.js to set executable permissions on
+Unix. Windows needs no `chmod` command.
+
 ```bash
 # Install Metal Toolchain if needed
 xcodebuild -downloadComponent MetalToolchain

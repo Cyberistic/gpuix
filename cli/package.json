@@ -47,7 +47,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "tsc && node -e \"if (process.platform !== 'win32') require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "test": "vitest run src",
     "prepublishOnly": "node -e \"if (!process.env.CI) { console.error('Never publish @gpuix/cli locally. CI is the only release path. See AGENTS.md.'); process.exit(1) }\" && rimraf dist \"*.tsbuildinfo\" && bun run build"
   },
