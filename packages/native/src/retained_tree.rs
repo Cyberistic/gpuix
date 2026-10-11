@@ -215,7 +215,7 @@ pub struct RetainedTree {
     pub motion_ids: HashSet<u64>,
     /// Elements that `needs_focus`, in id order. Kept as mutations arrive so the
     /// per-frame focus sync visits these few instead of every retained element:
-    /// a long chat retains thousands, and nearly none are focusable.
+    /// a large tree retains thousands, and nearly none are focusable.
     pub focusable_ids: std::collections::BTreeSet<u64>,
     /// How many `anchored` elements exist. Without any, an `elements_at` walk
     /// can drop a clipped subtree whole.

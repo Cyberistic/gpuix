@@ -5921,7 +5921,7 @@ fn scrollbar_overlay(handle: gpui::ScrollHandle, thumbs: ThumbStyle) -> gpui::An
 
 /// How far a virtual list can scroll and has, for `paint_scrollbars`. Rows the
 /// list has not measured count as the average measured row, not as the single
-/// `estimatedItemHeight`, which a thread of tall rows would otherwise miss by
+/// `estimatedItemHeight`, which a list of tall rows would otherwise miss by
 /// a few times. Before any row is measured the list's own totals stand.
 fn list_scroll_extent(
     state: &gpui::ListState,

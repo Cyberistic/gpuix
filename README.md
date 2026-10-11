@@ -1772,7 +1772,7 @@ to the box that has the `<virtual-list>` as a direct child.
 ### Give memory back when idle
 
 A JavaScript engine collects on allocation pressure, so after a burst of work
-(the first mount, opening a long thread) the heap stays at its peak until the
+(the first mount, opening a large screen) the heap stays at its peak until the
 next burst. `collectGarbageWhenIdle()` runs one full collection once the app has
 stopped committing for a while, then waits for the next burst.
 

@@ -7,7 +7,7 @@ const describeNative = hasNativeTestRenderer ? describe : describe.skip
 describeNative("root context", () => {
   // An app shell reads the renderer and passes `memo` rows a fresh callback
   // whenever it re-renders. If every `root.render()` counted as a context
-  // change, one keystroke in the shell would re-render the whole transcript.
+  // change, one keystroke in the shell would re-render every row below it.
   it("does not re-render useGpuix consumers when the root renders again", () => {
     const { render, unmount } = createTestRoot()
     try {

@@ -173,7 +173,7 @@ impl HighlightSpec {
 /// A query ready to search with: lowercased unless the match is case
 /// sensitive, behind a `memmem` searcher that is built once. The standard
 /// library builds a fresh searcher for every `match_indices` call, and a
-/// keystroke makes one call per text group, which on a long thread cost more
+/// keystroke makes one call per text group, which on a long document cost more
 /// than scanning the text.
 #[derive(Clone)]
 pub struct Needle {

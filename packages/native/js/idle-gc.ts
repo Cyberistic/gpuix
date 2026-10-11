@@ -40,13 +40,13 @@ function defaultCollector(): Collector | undefined {
  * Run one full garbage collection once the app has been quiet for a while.
  *
  * A JavaScript engine collects on allocation pressure, so after a burst of work
- * (the first mount, opening a long thread) the heap and the pages behind it stay
+ * (the first mount, opening a large screen) the heap and the pages behind it stay
  * at their peak until the next burst. This waits for `activity` to hold still
  * for `quietChecks` looks and the process to be under `busyCpu`, collects once,
  * then waits for the next busy period.
  *
  * CPU alone cannot stand for "quiet": a focused text field blinks its caret in
- * native code and redraws the window twice a second, which on a long thread
+ * native code and redraws the window twice a second, which on a large screen
  * exceeds any threshold that would still tell a busy period apart. Commits do
  * not move for that, so they decide, and CPU only covers work that commits
  * nothing.
