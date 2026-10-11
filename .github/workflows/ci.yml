@@ -23,12 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One target per OS, on the architecture that OS is mostly used on.
-        # Every extra target is a full gpui build, and gpui is most of the
-        # wall clock of this workflow. Add a target back when someone asks
-        # for it, not before: `packages/native/package.json` `napi.targets`
-        # must list exactly the same set, or the published loader looks for
-        # a platform package that CI never built.
+        # Keep these targets in sync with packages/native/package.json napi.targets.
         settings:
           # ── macOS (Metal) ──────────────────────────────────────────
           # default features include test-support (TestGpuixRenderer)
@@ -47,6 +42,10 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             bunTarget: bun-windows-x64
+            build: bun run build
+          - host: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            bunTarget: bun-windows-arm64
             build: bun run build
     name: build - ${{ matrix.settings.target }}
     runs-on: ${{ matrix.settings.host }}
@@ -79,6 +78,18 @@ jobs:
       - name: Install Metal toolchain
         if: contains(matrix.settings.target, 'apple-darwin')
         run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Configure Windows ARM64 Clang
+        if: matrix.settings.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+          $llvm = Join-Path $vs 'VC\Tools\Llvm\ARM64\bin'
+          if (!(Test-Path "$llvm\clang.exe")) { throw 'Visual Studio ARM64 Clang is missing' }
+          $llvm | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$llvm\clang.exe" --version
+          cmake --version
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -254,9 +265,19 @@ jobs:
         working-directory: cli
 
   test-windows:
-    name: test-windows
+    name: test-windows - ${{ matrix.settings.arch }}
     needs: build
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: x64
+          - host: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            arch: arm64
+    runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@v4
 
@@ -267,14 +288,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          architecture: ${{ matrix.settings.arch }}
 
       - name: Install dependencies
         run: bun install
 
-      - name: Download Windows x64 artifact
+      - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: bindings-x86_64-pc-windows-msvc
+          name: bindings-${{ matrix.settings.target }}
           path: packages/native/
 
       - name: Load native binding with Bun

@@ -345,7 +345,9 @@ tar -xzf example-chat-aarch64-apple-darwin.tar.gz
 
 The archive keeps the executable bit, so there is no `chmod` step. macOS may still block the unsigned binary the first time. Right-click the file, choose **Open**, and confirm.
 
-On Windows, download `example-chat-x86_64-pc-windows-msvc.exe` and double-click it. On Linux, the file is `example-chat-x86_64-unknown-linux-gnu.tar.gz`.
+On Windows, download `example-chat-x86_64-pc-windows-msvc.exe` for x64 or
+`example-chat-aarch64-pc-windows-msvc.exe` for ARM64 and double-click it. On Linux,
+the file is `example-chat-x86_64-unknown-linux-gnu.tar.gz`.
 
 The chat and disktree desktop examples keep the native Windows title bar for
 dragging, minimizing, maximizing, and closing the window. Other platforms keep
@@ -657,8 +659,11 @@ bun --hot counter.tsx
 
 ### Windows ARM64 source builds
 
-**ARM64 builds are local only.** Published Windows packages and CI currently
-target x64. Use ARM64 Node.js and Bun when loading a locally built ARM64 addon.
+**Windows builds cover x64 and ARM64.** CI builds ARM64 on GitHub's
+`windows-11-arm` runner, tests the native addon with ARM64 Node.js and Bun,
+and includes it in the native npm packages and standalone chat release assets.
+Use an ARM64 runtime to load the ARM64 addon; the loader selects the package
+from the runtime's architecture, not the machine's architecture.
 
 In Visual Studio Installer, install **Desktop development with C++**, the
 ARM64 MSVC tools, a Windows SDK, C++ Clang tools, and CMake. Open a developer

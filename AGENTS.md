@@ -843,7 +843,7 @@ locally with `bun publish` in `disktree/` from a clean checkout of `main`.
 the `@gpuix/native` and `@gpuix/react` versions in the repo are already on npm,
 because `workspace:^` becomes a range on those versions.
 
-`.github/workflows/ci.yml` builds `@gpuix/native` for **one target per OS**,
+`.github/workflows/ci.yml` builds `@gpuix/native` for **four native targets**,
 uploads the `.node` artifacts, then the `publish` job downloads them, runs
 `napi create-npm-dirs` + `napi artifacts`, and publishes `@gpuix/native`,
 `@gpuix/react`, and `@gpuix/solid`. The independent `publish-cli` job tests and
@@ -854,9 +854,12 @@ publishes `@gpuix/cli` without waiting for native platform tests.
 | macOS | `aarch64-apple-darwin` | Metal | `test-support` |
 | Linux | `x86_64-unknown-linux-gnu` | Vulkan / wgpu | `--no-default-features` |
 | Windows | `x86_64-pc-windows-msvc` | Direct3D | `test-support` |
+| Windows ARM64 | `aarch64-pc-windows-msvc` | Direct3D | `test-support` |
 
-Every extra target is a full gpui build, and gpui is most of the wall clock here,
-so the matrix carries the architecture each OS is mostly used on and nothing else.
+Windows ARM64 builds on `windows-11-arm`, with Visual Studio's ARM64 Clang on
+`PATH` for `ring`. The Windows test job runs the same binding, renderer, React,
+Solid, and example checks on x64 and ARM64. Publishing waits for both.
+Every extra target is a full gpui build, and gpui is most of the wall clock here.
 **The matrix and `napi.targets` in `packages/native/package.json` must list the
 same set.** A target in one and not the other means the published loader looks for
 a platform package that CI never built. Add a target back when someone asks for it.
