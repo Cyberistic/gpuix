@@ -2,8 +2,8 @@
 // native elements and event contract.
 import {
   BUILT_IN_TYPES,
-  EVENT_PROPS,
   EVENT_PROP_NAMES,
+  EVENT_TYPE_BY_PROP,
   UNIVERSAL_PROPS,
   registerEventHandler,
   serializeCustomProp,
@@ -146,7 +146,7 @@ export function replaceHostText(node: HostText, value: string): void {
 }
 
 function eventTypeFor(name: string): string | undefined {
-  return EVENT_PROPS.find(([prop]) => prop === name)?.[1]
+  return EVENT_TYPE_BY_PROP.get(name)
 }
 
 function customPropAllowed(node: HostElement, name: string): boolean {

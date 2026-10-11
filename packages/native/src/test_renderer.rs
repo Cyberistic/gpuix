@@ -455,6 +455,24 @@ impl TestGpuixRenderer {
         })
     }
 
+    /// Simulate the pointer leaving the window, as the platform reports it when
+    /// the cursor crosses the window edge: there is no final mouse move.
+    #[napi]
+    pub fn simulate_mouse_exit(&self, x: f64, y: f64) -> Result<()> {
+        with_test_state(|cx, window, _view| {
+            simulate_event_with_view_lease(
+                cx,
+                window,
+                gpui::MouseExitEvent {
+                    position: gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                },
+            );
+            Ok(())
+        })
+    }
+
     /// Focus an element by its numeric ID.
     /// The element must have a FocusHandle (created by sync_focus_handles when
     /// the element has keyDown, keyUp, focus, or blur listeners).
@@ -884,6 +902,20 @@ impl TestGpuixRenderer {
         })
     }
 
+    /// Make the fonts in a TrueType or OpenType file usable by `fontFamily`.
+    #[napi]
+    pub fn register_font(&self, data: Buffer) -> Result<()> {
+        let bytes = data.to_vec();
+        with_test_state(|cx, window, view| {
+            let view = view.clone();
+            cx.update_window(window, |_, window, app| {
+                view.update(app, |view, cx| view.register_font(bytes, window, cx))
+            })
+            .map_err(|e| Error::from_reason(e.to_string()))?
+            .map_err(Error::from_reason)
+        })
+    }
+
     /// The logical scroll anchor of a `<virtual-list>`:
     /// `[itemIndex, offsetInItemPx, viewportHeightPx]`, or null for anything
     /// else. `itemIndex == item count` is gpui's at-end sentinel.
@@ -1118,6 +1150,18 @@ impl TestGpuixRenderer {
         let id = to_element_id(id)?;
         self.flush()?;
         Ok(crate::automation::get_bounds(id).map(crate::renderer::ElementBounds::from_painted))
+    }
+
+    /// Ids under the window point, topmost first. See the live renderer.
+    #[napi]
+    pub fn get_elements_at(&self, x: f64, y: f64) -> Result<Vec<f64>> {
+        self.flush()?;
+        let tree = self.tree.lock().unwrap();
+        Ok(tree
+            .elements_at(x, y, &crate::automation::get_bounds)
+            .into_iter()
+            .map(|id| id as f64)
+            .collect())
     }
 
     #[napi]

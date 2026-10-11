@@ -439,6 +439,10 @@ enum UiCommand {
         bytes: Vec<u8>,
         response: SyncSender<std::result::Result<(), String>>,
     },
+    RegisterFont {
+        bytes: Vec<u8>,
+        response: SyncSender<std::result::Result<(), String>>,
+    },
     GetScrollOffset {
         id: u64,
         response: SyncSender<Option<[f64; 2]>>,
@@ -632,6 +636,11 @@ async fn run_ui_commands(
                     .send(view.set_encoded_image(id, bytes, window, cx))
                     .ok();
             }),
+            UiCommand::RegisterFont { bytes, response } => {
+                window.update(cx, move |view, window, cx| {
+                    response.send(view.register_font(bytes, window, cx)).ok();
+                })
+            }
             UiCommand::GetScrollOffset { id, response } => {
                 let offset = VIRTUAL_LIST_STATES
                     .with(|cell| {
@@ -1032,6 +1041,32 @@ impl GpuixRenderer {
         Err(Error::from_reason("Unsupported operating system"))
     }
 
+    fn elements_at(&self, x: f64, y: f64) -> Result<Vec<u64>> {
+        #[cfg(target_os = "macos")]
+        {
+            let tree = self.tree.lock().unwrap();
+            return Ok(tree.elements_at(x, y, &crate::automation::get_bounds));
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            let bounds = self.automation_bounds()?;
+            let tree = self.tree.lock().unwrap();
+            return Ok(tree.elements_at(x, y, &|id| bounds.get(&id).copied()));
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        {
+            let _ = (x, y);
+            Err(Error::from_reason("Unsupported operating system"))
+        }
+    }
+
     fn element_bounds(&self, id: u64) -> Result<Option<crate::automation::ElementBounds>> {
         #[cfg(target_os = "macos")]
         return Ok(crate::automation::get_bounds(id));
@@ -1385,8 +1420,14 @@ impl GpuixRenderer {
         let mut tree = self.tree.lock().unwrap();
         let destroyed =
             apply_batch_to_tree(&mut tree, json.as_bytes()).map_err(Error::from_reason)?;
+        let dirty = tree.take_dirty();
         drop(tree);
-        self.request_invalidate()?;
+        // A re-render that changed nothing sends a batch of identical resends.
+        // Waking the window for it makes it rebuild and diff the whole element
+        // tree to draw the frame it already has.
+        if dirty {
+            self.request_invalidate()?;
+        }
         Ok(destroyed)
     }
 
@@ -2248,6 +2289,36 @@ impl GpuixRenderer {
         Err(Error::from_reason("Unsupported operating system"))
     }
 
+    /// Make the fonts in a TrueType or OpenType file (or a collection) usable by
+    /// `fontFamily`, under the family names the file declares. Call it before
+    /// the text that names the family is first laid out: a family that did not
+    /// exist then has already fallen back to another font.
+    #[napi]
+    pub fn register_font(&self, data: Buffer) -> Result<()> {
+        let bytes = data.to_vec();
+        #[cfg(target_os = "macos")]
+        {
+            return update_window(move |view, window, cx| view.register_font(bytes, window, cx))?
+                .map_err(Error::from_reason);
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::RegisterFont { bytes, response })?;
+            return recv_ui_response(receiver, "the font registration")?
+                .map_err(Error::from_reason);
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        Err(Error::from_reason("Unsupported operating system"))
+    }
+
     #[napi]
     pub fn get_automation_tree(&self) -> Result<String> {
         self.request_invalidate()?;
@@ -2262,6 +2333,19 @@ impl GpuixRenderer {
     pub fn get_element_bounds(&self, id: f64) -> Result<Option<ElementBounds>> {
         let id = to_element_id(id)?;
         Ok(self.element_bounds(id)?.map(ElementBounds::from_painted))
+    }
+
+    /// The elements whose last painted box holds the window point `(x, y)`,
+    /// topmost first, like the DOM's `elementsFromPoint`. An element that did
+    /// not paint is never listed, `overflow: hidden | scroll` clips what lies
+    /// outside it, and `pointer-events: none` is skipped.
+    #[napi]
+    pub fn get_elements_at(&self, x: f64, y: f64) -> Result<Vec<f64>> {
+        Ok(self
+            .elements_at(x, y)?
+            .into_iter()
+            .map(|id| id as f64)
+            .collect())
     }
 
     #[napi]
@@ -2881,9 +2965,14 @@ impl WebGpuixRenderer {
         &self,
         json: String,
     ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
-        let destroyed = apply_batch_to_tree(&mut self.tree.lock().unwrap(), json.as_bytes())
+        let mut tree = self.tree.lock().unwrap();
+        let destroyed = apply_batch_to_tree(&mut tree, json.as_bytes())
             .map_err(|error| wasm_bindgen::JsValue::from_str(&error))?;
-        notify_web();
+        let dirty = tree.take_dirty();
+        drop(tree);
+        if dirty {
+            notify_web();
+        }
         Ok(web_number_array(destroyed))
     }
 
@@ -3436,7 +3525,21 @@ pub(crate) struct GpuixView {
     /// Resolved `highlight` state, keyed by the element that declared it.
     /// Empty in every app that does not use search.
     highlights: HashMap<u64, HighlightCacheEntry>,
+    /// What `onLayout` and `onScrollChange` last reported, for the elements that
+    /// have the listener. Shared with the paint closures that compare against it.
+    paint_reports: SharedPaintReports,
 }
+
+#[derive(Default)]
+pub(crate) struct PaintReports {
+    /// Border-box size last delivered through `onLayout`.
+    sizes: HashMap<u64, (f32, f32)>,
+    /// Scroll offset last seen for `onScrollChange`. Recorded on the first paint
+    /// without an event, so only movement is reported.
+    scrolls: HashMap<u64, (f32, f32)>,
+}
+
+pub(crate) type SharedPaintReports = Rc<RefCell<PaintReports>>;
 
 /// Two-level cache for one element's `highlight`.
 ///
@@ -3724,6 +3827,7 @@ impl GpuixView {
             selection_scroll_task: None,
             clock: crate::automation::AutomationClock::new(),
             highlights: HashMap::new(),
+            paint_reports: SharedPaintReports::default(),
         }
     }
 
@@ -3783,6 +3887,24 @@ impl GpuixView {
             cx.svg_renderer(),
         )?;
         self.set_live_image(id, image, window, cx)
+    }
+
+    /// Adds the fonts in `bytes` to the text system and repaints, so text that
+    /// names one of them picks it up.
+    pub(crate) fn register_font(
+        &mut self,
+        bytes: Vec<u8>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> std::result::Result<(), String> {
+        check_font(&bytes)?;
+        window
+            .text_system()
+            .add_fonts(vec![std::borrow::Cow::Owned(bytes)])
+            .map_err(|error| error.to_string())?;
+        cx.notify();
+        window.refresh();
+        Ok(())
     }
 
     pub(crate) fn scroll_element_into_view(&self, id: u64) -> bool {
@@ -3941,6 +4063,7 @@ impl GpuixView {
             selection: self.selection.clone(),
             inherited,
             highlights: &mut self.highlights,
+            paint_reports: &self.paint_reports,
             highlight_events: &mut highlight_events,
             keyboard_focus,
         };
@@ -4066,6 +4189,7 @@ pub(crate) struct BuildCtx<'a> {
     pub inherited: Inherited,
     /// Persistent `highlight` caches, keyed by the declaring element.
     highlights: &'a mut HashMap<u64, HighlightCacheEntry>,
+    paint_reports: &'a SharedPaintReports,
     /// `onHighlight` payloads queued during the build.
     ///
     /// Never emitted inline: a handler that calls `setState` repaints, which
@@ -4665,7 +4789,7 @@ impl GpuixView {
         window: &gpui::Window,
         cx: &gpui::App,
     ) -> Option<Arc<[u64]>> {
-        if !tree.keyboard_focus_dim || !window.last_input_was_keyboard() {
+        if !tree.keyboard_focus_dim() || !window.last_input_was_keyboard() {
             return None;
         }
         let focused = window.focused(cx)?.id();
@@ -4698,28 +4822,19 @@ impl GpuixView {
         }) {
             self.pending_focus_element = None;
         }
-        let tab_index = |element: &crate::retained_tree::RetainedElement| {
-            element
-                .custom_props
-                .get("tabIndex")
-                .and_then(|value| value.as_i64())
-                .and_then(|index| isize::try_from(index).ok())
-        };
-        let needs_focus = |element: &crate::retained_tree::RetainedElement| {
-            matches!(element.element_type.as_str(), "input" | "textarea")
-                || tab_index(element).is_some()
-                || element.events.contains("keyDown")
-                || element.events.contains("keyUp")
-                || element.events.contains("focus")
-                || element.events.contains("blur")
-        };
+        // Only the focusable elements are visited. This runs every frame, and
+        // the rest of the tree is orders of magnitude larger.
+        //
         // Create handles for elements that need focus but don't have one yet.
-        for (&id, element) in &tree.elements {
-            let tab_index = tab_index(element).or_else(|| {
+        for &id in &tree.focusable_ids {
+            let Some(element) = tree.elements.get(&id) else {
+                continue;
+            };
+            let tab_index = element.tab_index().or_else(|| {
                 matches!(element.element_type.as_str(), "input" | "textarea").then_some(0)
             });
 
-            if needs_focus(element) && !self.focus_handles.contains_key(&id) {
+            if !self.focus_handles.contains_key(&id) {
                 let handle = match tab_index {
                     Some(index) => cx.focus_handle().tab_index(index).tab_stop(index >= 0),
                     None => cx.focus_handle(),
@@ -4756,8 +4871,10 @@ impl GpuixView {
                 .get(id)
                 .is_some_and(|element| element.events.contains(event))
         });
-        for (&id, element) in &tree.elements {
-            let Some(handle) = self.focus_handles.get(&id).cloned() else {
+        for &id in &tree.focusable_ids {
+            let (Some(element), Some(handle)) =
+                (tree.elements.get(&id), self.focus_handles.get(&id).cloned())
+            else {
                 continue;
             };
             let focus_key = (id, "focus".to_string());
@@ -4783,7 +4900,7 @@ impl GpuixView {
 
         // Clean up handles for elements that no longer exist.
         self.focus_handles
-            .retain(|id, _| tree.elements.get(id).is_some_and(&needs_focus));
+            .retain(|id, _| tree.focusable_ids.contains(id));
     }
 }
 
@@ -4839,6 +4956,25 @@ impl gpui::Render for GpuixView {
             .retain(|id, _| tree.elements.contains_key(id));
         self.virtual_lists
             .retain(|id, _| tree.elements.contains_key(id));
+        // Pruned by listener, not existence: dropping `onLayout` and adding it
+        // back reports the size again, like a fresh observer.
+        {
+            let mut reports = self.paint_reports.borrow_mut();
+            if !reports.sizes.is_empty() {
+                reports.sizes.retain(|id, _| {
+                    tree.elements
+                        .get(id)
+                        .is_some_and(|element| element.events.contains("layout"))
+                });
+            }
+            if !reports.scrolls.is_empty() {
+                reports.scrolls.retain(|id, _| {
+                    tree.elements
+                        .get(id)
+                        .is_some_and(|element| element.events.contains("scrollChange"))
+                });
+            }
+        }
         // Build the element tree. custom_registry, focus_handles, and scroll_handles
         // are different fields of self, so Rust allows borrowing all simultaneously.
         let theme = Theme::dark();
@@ -4869,6 +5005,7 @@ impl gpui::Render for GpuixView {
                     selection: self.selection.clone(),
                     inherited: Inherited::root(&theme),
                     highlights: &mut self.highlights,
+                    paint_reports: &self.paint_reports,
                     highlight_events: &mut highlight_events,
                     keyboard_focus,
                 };
@@ -4963,7 +5100,10 @@ pub(crate) fn build_element(
 ) -> gpui::AnyElement {
     use gpui::IntoElement;
 
-    let Some(element) = ctx.tree.elements.get(&id) else {
+    // Copy the tree reference out of `ctx`, so `element` borrows the tree and
+    // not the build context, which the children below need mutably.
+    let tree = ctx.tree;
+    let Some(element) = tree.elements.get(&id) else {
         return gpui::Empty.into_any_element();
     };
 
@@ -5187,6 +5327,7 @@ fn build_virtual_list(
         };
         view.build_virtual_child(list_id, index, child_id, inherited.clone(), window, cx)
     });
+    let scroll_state = list_state.clone();
     let mut list = gpui::list(list_state, render_item)
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
         .id(gpui::ElementId::Name(gpui::SharedString::from(format!(
@@ -5196,7 +5337,20 @@ fn build_virtual_list(
     if let Some(style) = element.style.as_deref() {
         list = apply_styles(list, style);
     }
-    apply_accessibility(list, &element.custom_props, None).into_any_element()
+    let list = apply_accessibility(list, &element.custom_props, None).into_any_element();
+    match element
+        .style
+        .as_deref()
+        .and_then(|style| ThumbStyle::of(style, false, true))
+    {
+        Some(thumbs) => ListWithScrollbar {
+            list,
+            state: scroll_state,
+            thumbs,
+        }
+        .into_any_element(),
+        None => list,
+    }
 }
 
 fn unmounted_virtual_row(height: f32) -> gpui::AnyElement {
@@ -5222,18 +5376,17 @@ fn joined_text_content(
     if let Some(content) = element.content.as_deref().filter(|value| !value.is_empty()) {
         return Some(content.to_string());
     }
-    let mut parts = Vec::new();
+    let mut joined = String::new();
     for child_id in &element.children {
         let Some(child) = tree.elements.get(child_id) else {
             continue;
         };
         if child.element_type == "text" {
             if let Some(content) = child.content.as_deref() {
-                parts.push(content);
+                joined.push_str(content);
             }
         }
     }
-    let joined = parts.concat();
     (!joined.is_empty()).then_some(joined)
 }
 
@@ -5341,10 +5494,12 @@ pub(crate) fn build_host_container(
     if style.and_then(|style| style.position.as_deref()).is_none() {
         el = el.relative();
     }
-    el = el.child(crate::automation::bounds_tracker(
+    el = crate::automation::track_host_bounds(
+        el,
         element.id,
         selection_start_flag(style),
-    ));
+        paint_reporter(element.id, &element.events, ctx),
+    );
 
     if let Some(handle) = ctx.focus_handles.get(&element.id) {
         el = el.track_focus(handle);
@@ -5600,8 +5755,7 @@ pub(crate) fn build_host_container(
     }
 
     // Children
-    let child_ids: Vec<u64> = element.children.clone();
-    for child_id in child_ids {
+    for &child_id in &element.children {
         let child = build_element(child_id, ctx, window, cx);
         el = if overflow_x_only {
             el.child(gpui::div().flex_none().child(child))
@@ -5610,7 +5764,286 @@ pub(crate) fn build_host_container(
         };
     }
 
+    // Last, so the thumb paints over the content.
+    if let (Some(style), Some(handle)) = (style, ctx.scroll_handles.get(&element.id)) {
+        if let Some(thumbs) = ThumbStyle::of(
+            style,
+            style.overflow_x.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
+            style.overflow_y.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
+        ) {
+            el = el.child(scrollbar_overlay(handle.clone(), thumbs));
+        }
+    }
+
     el.into_any_element()
+}
+
+/// A classic scrollbar's default thickness.
+const SCROLLBAR_WIDTH: f32 = 6.0;
+/// The shortest a thumb gets, however long the content.
+const MIN_SCROLLBAR_THUMB: f32 = 20.0;
+
+/// Where a thumb starts and how long it is along one axis, in the track's own
+/// coordinates. `track` is the viewport's extent, `max_scroll` how far the
+/// content can move, and `offset` how far it has (zero or negative). `None`
+/// when the content fits, so there is nothing to show.
+fn scrollbar_thumb(track: f32, max_scroll: f32, offset: f32) -> Option<(f32, f32)> {
+    if track <= 0.0 || max_scroll <= 1.0 {
+        return None;
+    }
+    let length =
+        (track * track / (track + max_scroll)).clamp(MIN_SCROLLBAR_THUMB.min(track), track);
+    let progress = (-offset / max_scroll).clamp(0.0, 1.0);
+    Some((progress * (track - length), length))
+}
+
+/// What a scroller asks its thumbs to look like, and along which axes it has any.
+#[derive(Clone, Copy)]
+struct ThumbStyle {
+    color: gpui::Hsla,
+    thickness: f32,
+    horizontal: bool,
+    vertical: bool,
+}
+
+impl ThumbStyle {
+    /// `None` unless the style names a `scrollbarColor` that parses.
+    fn of(style: &StyleDesc, horizontal: bool, vertical: bool) -> Option<Self> {
+        let color = style
+            .scrollbar_color
+            .as_deref()
+            .and_then(crate::color::parse_color_rgba)?;
+        Some(Self {
+            color: color.into(),
+            thickness: style.scrollbar_width.unwrap_or(SCROLLBAR_WIDTH as f64) as f32,
+            horizontal,
+            vertical,
+        })
+    }
+}
+
+/// Paints the thumbs of a viewport at `origin` with `size`. `max` is how far
+/// its content can move and `offset` how far it has (zero or negative).
+fn paint_scrollbars(
+    window: &mut gpui::Window,
+    origin: gpui::Point<gpui::Pixels>,
+    size: gpui::Size<gpui::Pixels>,
+    max: gpui::Point<gpui::Pixels>,
+    offset: gpui::Point<gpui::Pixels>,
+    thumbs: ThumbStyle,
+) {
+    let ThumbStyle {
+        color,
+        thickness,
+        horizontal,
+        vertical,
+    } = thumbs;
+    let (width, height) = (f32::from(size.width), f32::from(size.height));
+    let along = |show: bool, track: f32, max_scroll: gpui::Pixels, offset: gpui::Pixels| {
+        show.then(|| scrollbar_thumb(track, f32::from(max_scroll), f32::from(offset)))
+            .flatten()
+    };
+    let mut across = along(vertical, height, max.y, offset.y);
+    let mut sideways = along(horizontal, width, max.x, offset.x);
+    if across.is_some() && sideways.is_some() {
+        // Leave the corner to whichever thumb reaches it first.
+        across = along(vertical, height - thickness, max.y, offset.y);
+        sideways = along(horizontal, width - thickness, max.x, offset.x);
+    }
+    let paint = |window: &mut gpui::Window, x: f32, y: f32, w: f32, h: f32| {
+        // Whole pixels, so a thumb is as crisp as a browser's.
+        let rect = gpui::Bounds::new(
+            gpui::point(
+                origin.x + gpui::px(x.round()),
+                origin.y + gpui::px(y.round()),
+            ),
+            gpui::size(gpui::px(w.round()), gpui::px(h.round())),
+        );
+        window.paint_quad(gpui::quad(
+            rect,
+            gpui::px(thickness / 2.0),
+            color,
+            gpui::px(0.0),
+            gpui::transparent_black(),
+            gpui::BorderStyle::default(),
+        ));
+    };
+    if let Some((start, length)) = across {
+        paint(window, width - thickness, start, thickness, length);
+    }
+    if let Some((start, length)) = sideways {
+        paint(window, start, height - thickness, length, thickness);
+    }
+}
+
+/// The thumbs of a scroll container, painted from its own scroll offset in the
+/// frame the content moves in, so a wheel tick costs nothing beyond that frame.
+///
+/// It is the container's last child, absolutely placed over its padding box.
+/// Children of a scroller are painted shifted by the scroll offset, so the
+/// viewport is this box moved back by it. It has no hitbox and takes no input.
+fn scrollbar_overlay(handle: gpui::ScrollHandle, thumbs: ThumbStyle) -> gpui::AnyElement {
+    use gpui::prelude::*;
+
+    gpui::canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let offset = handle.offset();
+            paint_scrollbars(
+                window,
+                bounds.origin - offset,
+                bounds.size,
+                handle.max_offset(),
+                offset,
+                thumbs,
+            );
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// How far a virtual list can scroll and has, for `paint_scrollbars`. Rows the
+/// list has not measured count as the average measured row, not as the single
+/// `estimatedItemHeight`, which a list of tall rows would otherwise miss by
+/// a few times. Before any row is measured the list's own totals stand.
+fn list_scroll_extent(
+    state: &gpui::ListState,
+) -> (gpui::Point<gpui::Pixels>, gpui::Point<gpui::Pixels>) {
+    match state.averaged_scroll_extent() {
+        Some((max, offset)) => (
+            gpui::point(gpui::px(0.0), max),
+            gpui::point(gpui::px(0.0), -offset),
+        ),
+        None => (
+            state.max_offset_for_scrollbar(),
+            state.scroll_px_offset_for_scrollbar(),
+        ),
+    }
+}
+
+/// A virtual list with its thumb painted over it.
+///
+/// A list element takes no children, and wrapping it in a box would change the
+/// layout its style asks for. This lays out, prepaints and paints as the list
+/// does (it answers with the list's own layout node), then draws the thumb in
+/// the list's bounds from what its `ListState` has measured: the same totals
+/// the list scrolls by, so the thumb and the scroll position cannot disagree.
+struct ListWithScrollbar {
+    list: gpui::AnyElement,
+    state: gpui::ListState,
+    thumbs: ThumbStyle,
+}
+
+impl gpui::IntoElement for ListWithScrollbar {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for ListWithScrollbar {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        (self.list.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.list.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.list.paint(window, cx);
+        let (max, offset) = list_scroll_extent(&self.state);
+        paint_scrollbars(window, bounds.origin, bounds.size, max, offset, self.thumbs);
+    }
+}
+
+#[cfg(test)]
+mod scrollbar_tests {
+    use super::scrollbar_thumb;
+
+    #[test]
+    fn a_thumb_is_the_viewports_share_of_the_content() {
+        // 100 of 300: a third of the track.
+        let (start, length) = scrollbar_thumb(100.0, 200.0, 0.0).unwrap();
+        assert_eq!(start, 0.0);
+        assert!((length - 100.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_thumb_runs_the_whole_track_as_the_content_runs_its_distance() {
+        let (_, length) = scrollbar_thumb(100.0, 200.0, 0.0).unwrap();
+        let (start, same_length) = scrollbar_thumb(100.0, 200.0, -200.0).unwrap();
+        assert_eq!(length, same_length);
+        assert!(
+            (start + length - 100.0).abs() < 0.01,
+            "ends at the end of the track"
+        );
+        let (halfway, _) = scrollbar_thumb(100.0, 200.0, -100.0).unwrap();
+        assert!((halfway - (100.0 - length) / 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_thumb_stays_inside_the_track_when_the_offset_overshoots() {
+        let (start, length) = scrollbar_thumb(100.0, 200.0, -450.0).unwrap();
+        assert!((start + length - 100.0).abs() < 0.01);
+        assert_eq!(scrollbar_thumb(100.0, 200.0, 30.0).unwrap().0, 0.0);
+    }
+
+    #[test]
+    fn a_thumb_is_never_shorter_than_a_grabbable_length_nor_longer_than_the_track() {
+        assert_eq!(scrollbar_thumb(100.0, 100_000.0, 0.0).unwrap().1, 20.0);
+        assert_eq!(scrollbar_thumb(10.0, 100_000.0, 0.0).unwrap().1, 10.0);
+    }
+
+    #[test]
+    fn content_that_fits_has_no_thumb() {
+        assert_eq!(scrollbar_thumb(100.0, 0.0, 0.0), None);
+        assert_eq!(
+            scrollbar_thumb(100.0, 0.5, 0.0),
+            None,
+            "a fraction of a pixel is rounding"
+        );
+        assert_eq!(scrollbar_thumb(0.0, 200.0, 0.0), None);
+    }
 }
 
 /// A selectable text run owned by `element`. Runs are left to gpui so the
@@ -5746,6 +6179,8 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
         Some("center") => el = el.items_center(),
         Some("start") | Some("flex-start") => el = el.items_start(),
         Some("end") | Some("flex-end") => el = el.items_end(),
+        Some("stretch") => el = el.items_stretch(),
+        Some("baseline") => el = el.items_baseline(),
         _ => {}
     }
     match style.align_content.as_deref() {
@@ -5765,6 +6200,7 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
         Some("end") | Some("flex-end") => el = el.justify_end(),
         Some("between") | Some("space-between") => el = el.justify_between(),
         Some("around") | Some("space-around") => el = el.justify_around(),
+        Some("evenly") | Some("space-evenly") => el = el.justify_evenly(),
         _ => {}
     }
     match style.align_self.as_deref() {
@@ -5880,6 +6316,11 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
     if let Some(left) = style.left {
         el = el.left(gpui::px(left as f32));
     }
+    if let Some(ratio) = style.aspect_ratio {
+        if ratio > 0.0 && ratio.is_finite() {
+            el = el.aspect_ratio(ratio as f32);
+        }
+    }
     if let Some(background) = style.resolved_background() {
         el = el.bg(background);
     }
@@ -5970,16 +6411,31 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
             el = el.border_color(color);
         }
     }
-    if let Some(ref shadow) = style.box_shadow {
-        if let Some(color) = crate::color::parse_color_rgba(&shadow.color) {
-            let shadow = gpui::BoxShadow::new(
-                gpui::px(shadow.offset_x as f32),
-                gpui::px(shadow.offset_y as f32),
-                color.into(),
-            )
-            .blur_radius(gpui::px(shadow.blur_radius.max(0.0) as f32))
-            .spread_radius(gpui::px(shadow.spread_radius as f32));
-            el = el.shadow(vec![shadow]);
+    match style.border_style.as_deref() {
+        Some("dashed") => el = el.border_dashed(),
+        Some("solid") => el.style().border_style = Some(gpui::BorderStyle::Solid),
+        _ => {}
+    }
+    if let Some(ref shadows) = style.box_shadow {
+        // A shadow whose colour does not parse is dropped on its own, so one
+        // bad entry does not take the rest of a list with it.
+        let shadows: Vec<gpui::BoxShadow> = shadows
+            .as_slice()
+            .iter()
+            .filter_map(|shadow| {
+                let color = crate::color::parse_color_rgba(&shadow.color)?;
+                let built = gpui::BoxShadow::new(
+                    gpui::px(shadow.offset_x as f32),
+                    gpui::px(shadow.offset_y as f32),
+                    color.into(),
+                )
+                .blur_radius(gpui::px(shadow.blur_radius.max(0.0) as f32))
+                .spread_radius(gpui::px(shadow.spread_radius as f32));
+                Some(if shadow.inset { built.inset() } else { built })
+            })
+            .collect();
+        if !shadows.is_empty() {
+            el = el.shadow(shadows);
         }
     }
     if style.outline_width.is_some() || style.outline_color.is_some() {
@@ -6069,6 +6525,117 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
         gpui::MouseButton::Navigate(_) => 3,
     }
 }
+
+/// The paint-driven events of one element, as one reporter for `on_painted`.
+///
+/// `onLayout`: its border box after the first paint with the listener, then again
+/// each time its size changes. A move without a resize reports nothing, so
+/// scrolling a list does not queue an event per row.
+///
+/// `onScrollChange`: its scroll offset each time it differs from the last paint,
+/// whatever moved it. The wheel is only one cause; a scrollbar drag or
+/// `scrollTo` moves it too, and gpui raises no event for those.
+///
+/// Events are queued after the paint that saw the change, never from inside it.
+/// The browser build calls the listener synchronously, and a handler that sets
+/// state would re-enter the frame that is being painted.
+fn paint_reporter(
+    id: u64,
+    events: &HashSet<String>,
+    ctx: &BuildCtx,
+) -> Option<crate::automation::PaintReporter> {
+    let layout = events.contains("layout");
+    let scroll = events
+        .contains("scrollChange")
+        .then(|| ctx.scroll_handles.get(&id).cloned())
+        .flatten();
+    if !layout && scroll.is_none() {
+        return None;
+    }
+    let callback = ctx.event_callback.clone()?;
+    let reports = ctx.paint_reports.clone();
+    Some(Rc::new(move |bounds, cx| {
+        if layout {
+            report_layout(id, bounds, &reports, &callback, cx);
+        }
+        if let Some(handle) = &scroll {
+            report_scroll(id, handle.offset(), &reports, &callback, cx);
+        }
+    }))
+}
+
+fn report_layout(
+    id: u64,
+    bounds: gpui::Bounds<gpui::Pixels>,
+    reports: &SharedPaintReports,
+    callback: &EventCallback,
+    cx: &mut gpui::App,
+) {
+    let size = (
+        f32::from(bounds.size.width),
+        f32::from(bounds.size.height),
+    );
+    {
+        let mut reports = reports.borrow_mut();
+        let unchanged = reports.sizes.get(&id).is_some_and(|last| {
+            (last.0 - size.0).abs() < PAINT_REPORT_EPSILON
+                && (last.1 - size.1).abs() < PAINT_REPORT_EPSILON
+        });
+        if unchanged {
+            return;
+        }
+        reports.sizes.insert(id, size);
+    }
+    let callback = Some(callback.clone());
+    cx.defer(move |_| {
+        emit_event_full(&callback, id, "layout", |payload| {
+            payload.x = Some(f64::from(f32::from(bounds.origin.x)));
+            payload.y = Some(f64::from(f32::from(bounds.origin.y)));
+            payload.width = Some(f64::from(size.0));
+            payload.height = Some(f64::from(size.1));
+        });
+    });
+}
+
+fn report_scroll(
+    id: u64,
+    offset: gpui::Point<gpui::Pixels>,
+    reports: &SharedPaintReports,
+    callback: &EventCallback,
+    cx: &mut gpui::App,
+) {
+    let offset = (f32::from(offset.x), f32::from(offset.y));
+    {
+        let mut reports = reports.borrow_mut();
+        match reports.scrolls.get(&id).copied() {
+            // The first paint only sets the baseline.
+            None => {
+                reports.scrolls.insert(id, offset);
+                return;
+            }
+            Some(last)
+                if (last.0 - offset.0).abs() < PAINT_REPORT_EPSILON
+                    && (last.1 - offset.1).abs() < PAINT_REPORT_EPSILON =>
+            {
+                return;
+            }
+            Some(_) => {
+                reports.scrolls.insert(id, offset);
+            }
+        }
+    }
+    let callback = Some(callback.clone());
+    cx.defer(move |_| {
+        emit_event_full(&callback, id, "scrollChange", |payload| {
+            payload.scroll_x = Some(f64::from(offset.0));
+            payload.scroll_y = Some(f64::from(offset.1));
+        });
+    });
+}
+
+/// Values closer than this are the same value. Layout is deterministic, so this
+/// only absorbs float noise from fractional scale factors.
+const PAINT_REPORT_EPSILON: f32 = 0.01;
 
 /// General-purpose event emitter. Builds a default EventPayload, lets the
 /// caller customize it via a closure, then sends it through the callback.
@@ -6448,10 +7015,10 @@ pub fn apply_batch_to_tree(tree: &mut RetainedTree, bytes: &[u8]) -> BatchResult
                 tree.set_event_listener(id, event_type, has_handler);
             }
             BatchOp::SetRoot { id } => {
-                tree.root_id = Some(id);
+                tree.set_root(id);
             }
             BatchOp::SetKeyboardFocusDim { enabled } => {
-                tree.keyboard_focus_dim = enabled;
+                tree.set_keyboard_focus_dim(enabled);
             }
             BatchOp::SetCustomProp { id, key, value } => {
                 tree.set_custom_prop(id, key, value);
@@ -7087,6 +7654,92 @@ mod batch_tests {
         out
     }
 
+    /// Whether the batch left something a frame would draw differently. The
+    /// window is only woken for these, so a wrong `false` is a stale screen and
+    /// a wrong `true` is a wasted frame.
+    fn dirty_after(tree: &mut RetainedTree, json: &str) -> bool {
+        apply(tree, json).expect("valid batch");
+        tree.take_dirty()
+    }
+
+    const MOUNT: &str = r##"[
+        ["createElement",1,"div"],["createElement",2,"text"],["createElement",3,"div"],
+        ["appendChild",1,2],["appendChild",1,3],["setRoot",1],
+        ["setStyle",1,{"width":100,"backgroundColor":"#112233"}],
+        ["setStyle",3,{"height":10}],
+        ["setText",2,"hello"],
+        ["setEventListener",3,"click",true],
+        ["setCustomProp",3,"aria-label","row"],
+        ["setCustomProp",3,"testId","row"],
+        ["setCustomProp",3,"autoFocus",true]
+    ]"##;
+
+    #[test]
+    fn mounting_marks_the_tree_dirty() {
+        let mut tree = RetainedTree::new();
+        assert!(dirty_after(&mut tree, MOUNT));
+    }
+
+    #[test]
+    fn resending_everything_unchanged_is_not_dirty() {
+        let mut tree = RetainedTree::new();
+        apply(&mut tree, MOUNT).expect("valid batch");
+        tree.take_dirty();
+
+        // The same ops again, with the style keys reordered: interning keys on
+        // raw bytes, so this reaches `set_style` as a different `Arc`.
+        let resend = r##"[
+            ["setRoot",1],
+            ["setStyle",1,{"backgroundColor":"#112233","width":100}],
+            ["setStyle",3,{"height":10}],
+            ["setText",2,"hello"],
+            ["setEventListener",3,"click",true],
+            ["setCustomProp",3,"aria-label","row"],
+            ["setCustomProp",3,"testId","row"],
+            ["setCustomProp",3,"autoFocus",true],
+            ["setKeyboardFocusDim",true],
+            ["setCustomProp",3,"missing",null]
+        ]"##;
+        assert!(!dirty_after(&mut tree, resend));
+    }
+
+    #[test]
+    fn each_kind_of_change_is_dirty() {
+        let changes = [
+            r#"[["setStyle",3,{"height":11}]]"#,
+            r#"[["setText",2,"changed"]]"#,
+            r#"[["setEventListener",3,"click",false]]"#,
+            r#"[["setEventListener",3,"mouseDown",true]]"#,
+            r#"[["setCustomProp",3,"aria-label","other"]]"#,
+            r#"[["setCustomProp",3,"aria-label",null]]"#,
+            r#"[["setCustomProp",3,"testId","other"]]"#,
+            r#"[["setCustomProp",3,"autoFocus",false]]"#,
+            r#"[["setKeyboardFocusDim",false]]"#,
+            r#"[["createElement",4,"div"]]"#,
+            r#"[["destroyElement",3]]"#,
+            r#"[["insertBefore",1,3,2]]"#,
+            r#"[["setRoot",3]]"#,
+        ];
+        for change in changes {
+            let mut tree = RetainedTree::new();
+            apply(&mut tree, MOUNT).expect("valid batch");
+            tree.take_dirty();
+            assert!(dirty_after(&mut tree, change), "{change} must repaint");
+        }
+    }
+
+    #[test]
+    fn a_rejected_batch_does_not_leave_the_tree_dirty() {
+        let mut tree = RetainedTree::new();
+        apply(&mut tree, MOUNT).expect("valid batch");
+        tree.take_dirty();
+
+        apply(&mut tree, r#"[["setText",2,"changed"],["setStyle",2,123]]"#)
+            .expect_err("malformed style");
+
+        assert!(!tree.take_dirty());
+    }
+
     /// The regression test for batch atomicity. `intern_style_payload` used to
     /// run inside the apply loop, so this batch created the element, set its
     /// text, and only then threw — leaving JS to retry against a tree that had
@@ -7482,4 +8135,31 @@ mod window_options_tests {
             other => panic!("expected a layer-shell window kind, got {other:?}"),
         }
     }
+}
+
+/// Rejects fonts GPUI's text system cannot load. It unwraps the family, full and
+/// PostScript name records and aborts the whole process when one is missing, and
+/// skips a font without an "m" glyph, which would leave the family unresolvable.
+fn check_font(bytes: &[u8]) -> std::result::Result<(), String> {
+    use ttf_parser::name_id::{FAMILY, FULL_NAME, POST_SCRIPT_NAME};
+
+    let face = ttf_parser::Face::parse(bytes, 0)
+        .map_err(|error| format!("not a TrueType or OpenType font: {error}"))?;
+    for (id, what) in [
+        (FAMILY, "family"),
+        (FULL_NAME, "full"),
+        (POST_SCRIPT_NAME, "PostScript"),
+    ] {
+        let named = face
+            .names()
+            .into_iter()
+            .any(|name| name.name_id == id && name.to_string().is_some());
+        if !named {
+            return Err(format!("font has no {what} name"));
+        }
+    }
+    if face.glyph_index('m').is_none() {
+        return Err("font has no glyph for \"m\"".to_string());
+    }
+    Ok(())
 }

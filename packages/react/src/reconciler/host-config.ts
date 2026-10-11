@@ -6,10 +6,12 @@
 
 import { createContext } from "react"
 import { DefaultEventPriority } from "react-reconciler/constants.js"
+import type { HostEventHandler } from "@gpuix/native/host"
 import {
   BUILT_IN_TYPES,
-  EVENT_PROPS,
+  EVENT_TYPE_BY_PROP,
   isReservedProp,
+  sameMutationValue,
   serializeCustomProp,
   UNIVERSAL_PROPS,
 } from "@gpuix/native/host"
@@ -40,6 +42,12 @@ interface HostNodeState {
   container: Container
   initialChildren: HostNode[]
   mounted: boolean
+  /**
+   * React hid this element (Suspense, Activity). Its native style carries
+   * `visibility: hidden`, so a style update must keep that rather than
+   * overwrite it with the visible one.
+   */
+  hidden: boolean
 }
 
 const hostNodeStates = new WeakMap<HostNode, HostNodeState>()
@@ -90,43 +98,94 @@ function nextId(container: Container): number {
 // ── Event wiring helpers ─────────────────────────────────────────────
 
 function syncEventListeners(container: Container, id: number, props: Props): void {
-  for (const [propName, eventType] of EVENT_PROPS) {
-    const handler = props[propName]
-    if (handler) {
-      registerEventHandler(container.eventHandlers, id, eventType, handler)
+  const record = props as Record<string, unknown>
+  for (const propName in record) {
+    const eventType = EVENT_TYPE_BY_PROP.get(propName)
+    const handler = record[propName]
+    if (eventType && handler) {
+      registerEventHandler(
+        container.eventHandlers,
+        id,
+        eventType,
+        handler as HostEventHandler
+      )
       container.renderer.setEventListener(id, eventType, true)
     }
   }
 }
 
+/**
+ * Walks the props an element has, not every event GPUIX knows: this runs for
+ * each re-rendered host element, and most have a few props and no handlers.
+ */
 function diffEventListeners(
   container: Container,
   id: number,
   oldProps: Props,
   newProps: Props
 ): void {
-  for (const [propName, eventType] of EVENT_PROPS) {
-    const oldHandler = oldProps[propName]
-    const newHandler = newProps[propName]
-
+  const previous = oldProps as Record<string, unknown>
+  const next = newProps as Record<string, unknown>
+  for (const propName in next) {
+    const eventType = EVENT_TYPE_BY_PROP.get(propName)
+    if (!eventType) continue
+    const oldHandler = previous[propName]
+    const newHandler = next[propName]
     if (oldHandler && !newHandler) {
       unregisterEventHandler(container.eventHandlers, id, eventType)
       container.renderer.setEventListener(id, eventType, false)
     } else if (newHandler && newHandler !== oldHandler) {
-      registerEventHandler(container.eventHandlers, id, eventType, newHandler)
+      registerEventHandler(
+        container.eventHandlers,
+        id,
+        eventType,
+        newHandler as HostEventHandler
+      )
       if (!oldHandler) {
         container.renderer.setEventListener(id, eventType, true)
       }
+    }
+  }
+  for (const propName in previous) {
+    if (propName in next) continue
+    const eventType = EVENT_TYPE_BY_PROP.get(propName)
+    if (eventType && previous[propName]) {
+      unregisterEventHandler(container.eventHandlers, id, eventType)
+      container.renderer.setEventListener(id, eventType, false)
     }
   }
 }
 
 // ── Style helper ─────────────────────────────────────────────────────
 
+const NO_STYLE = {}
+
 function sendStyle(renderer: MutationRenderer, id: number, props: Props): void {
   const style = props.style
   if (style == null || Object.keys(style).length === 0) return
   renderer.setStyle(id, style)
+}
+
+/**
+ * Whether two `style` props reach Rust as the same payload. An absent style and
+ * an empty one are the same, and so are two objects holding the same values:
+ * `style={{ ... }}` is a new object on every render, so reference equality
+ * alone would resend every styled element on every commit.
+ *
+ * Like React DOM, this does not see a style object mutated in place and passed
+ * again. Pass a new object when a style changes.
+ */
+function sameStyle(left: Props["style"], right: Props["style"]): boolean {
+  return left === right || sameMutationValue(left ?? NO_STYLE, right ?? NO_STYLE)
+}
+
+/** The style a hidden element keeps: its own, minus the states, plus `visibility: hidden`. */
+function hiddenStyle(style: Props["style"]) {
+  // Hover and active go, because a hidden element must stay hidden. A hover
+  // style that sets `visibility` would otherwise paint an element React
+  // asked to hide.
+  const { hover: _hover, active: _active, ...base } = style ?? {}
+  return { ...base, visibility: "hidden" }
 }
 
 // ── Custom prop forwarding ───────────────────────────────────────────
@@ -147,7 +206,13 @@ function syncCustomProps(
   }
 }
 
-/** Diff and send changed custom props to Rust. */
+/**
+ * Diff and send changed custom props to Rust.
+ *
+ * Compared by value after serialization: a handler or an inline object is new on
+ * every render, and a function serializes to `null` either way, so resending it
+ * would only make Rust parse and discard the same value again.
+ */
 function diffCustomProps(
   renderer: MutationRenderer,
   id: number,
@@ -156,24 +221,32 @@ function diffCustomProps(
   newProps: Props
 ): void {
   const builtIn = BUILT_IN_TYPES.has(type)
-  const oldEntries = Object.entries(oldProps)
-  const newKeys = Object.keys(newProps)
+  const previous = oldProps as Record<string, unknown>
+  const next = newProps as Record<string, unknown>
   // Updated or added props
-  for (const [key, value] of Object.entries(newProps)) {
+  for (const key in next) {
     if (isReservedProp(key)) continue
     if (builtIn && !UNIVERSAL_PROPS.has(key)) continue
-    const oldValue = oldEntries.find(([oldKey]) => oldKey === key)?.[1]
-    if (oldValue !== value) {
-      renderer.setCustomProp(id, key, serializeCustomProp(value))
+    const value = next[key]
+    const oldValue = previous[key]
+    if (value === oldValue) continue
+    const serialized = serializeCustomProp(value as Parameters<typeof serializeCustomProp>[0])
+    if (
+      key in previous &&
+      sameMutationValue(
+        serializeCustomProp(oldValue as Parameters<typeof serializeCustomProp>[0]),
+        serialized
+      )
+    ) {
+      continue
     }
+    renderer.setCustomProp(id, key, serialized)
   }
   // Removed props
-  for (const key of Object.keys(oldProps)) {
+  for (const key in previous) {
     if (isReservedProp(key)) continue
     if (builtIn && !UNIVERSAL_PROPS.has(key)) continue
-    if (!newKeys.includes(key)) {
-      renderer.setCustomProp(id, key, null)
-    }
+    if (!(key in next)) renderer.setCustomProp(id, key, null)
   }
 }
 
@@ -189,7 +262,8 @@ function materialize(node: HostNode): HostNodeState {
   const renderer = state.container.renderer
   if ("type" in node) {
     renderer.createElement(node.id, node.type)
-    sendStyle(renderer, node.id, node.props)
+    if (state.hidden) renderer.setStyle(node.id, hiddenStyle(node.props.style))
+    else sendStyle(renderer, node.id, node.props)
     syncEventListeners(state.container, node.id, node.props)
     syncCustomProps(renderer, node.id, node.type, node.props)
   } else {
@@ -204,6 +278,26 @@ function materialize(node: HostNode): HostNodeState {
   }
   state.initialChildren.length = 0
   return state
+}
+
+const portalContainers = new WeakMap<Instance, Container>()
+
+/**
+ * The container a portal into `target` mounts through.
+ *
+ * Cached per target because React compares a portal's `containerInfo` by
+ * identity, and a new object on every render would unmount and remount the
+ * portal's whole subtree.
+ */
+export function portalContainerFor(target: Instance): Container {
+  let container = portalContainers.get(target)
+  if (!container) {
+    container = Object.assign(Object.create(stateFor(target).container) as Container, {
+      portalTarget: target,
+    })
+    portalContainers.set(target, container)
+  }
+  return container
 }
 
 // ── Host config ──────────────────────────────────────────────────────
@@ -231,6 +325,7 @@ export const hostConfig = {
       container: rootContainerInstance,
       initialChildren: [],
       mounted: false,
+      hidden: false,
     })
     return instance
   },
@@ -263,11 +358,19 @@ export const hostConfig = {
     parentState.container.renderer.insertBefore(parent.id, child.id, beforeChild.id)
   },
 
+  // A window's root has one child, so there is nothing to order. A portal's
+  // children share their target with whatever else it holds, and React places
+  // one before another whenever their keys reorder.
   insertInContainerBefore(
-    _parent: Container,
-    _child: Instance,
-    _beforeChild: Instance
-  ): void {},
+    container: Container,
+    child: Instance,
+    beforeChild: Instance
+  ): void {
+    const target = container.portalTarget
+    if (!target) return
+    materialize(child)
+    container.renderer.insertBefore(target.id, child.id, beforeChild.id)
+  },
 
   removeChildFromContainer(parent: Container, child: Instance): void {
     const destroyed = parent.renderer.destroyElement(child.id)
@@ -318,6 +421,7 @@ export const hostConfig = {
       container: rootContainerInstance,
       initialChildren: [],
       mounted: false,
+      hidden: false,
     })
     return instance
   },
@@ -354,10 +458,17 @@ export const hostConfig = {
     newProps: Props,
     _internalInstanceHandle: unknown
   ): void {
-    const container = containerFor(instance)
-    // Always resend style — per-element JSON is small, and this avoids
-    // bugs from same-reference mutations or style removal.
-    container.renderer.setStyle(instance.id, newProps.style ?? {})
+    const state = stateFor(instance)
+    const { container } = state
+    // `commitUpdate` runs for every host element whose props object is new,
+    // which is every element a parent re-rendered. Most of those did not change
+    // their style, so send it only when it did.
+    if (!sameStyle(oldProps.style, newProps.style)) {
+      container.renderer.setStyle(
+        instance.id,
+        state.hidden ? hiddenStyle(newProps.style) : (newProps.style ?? {})
+      )
+    }
     diffEventListeners(container, instance.id, oldProps, newProps)
     // Custom prop diff (for non-div/text elements)
     diffCustomProps(container.renderer, instance.id, instance.type, oldProps, newProps)
@@ -375,7 +486,13 @@ export const hostConfig = {
 
   appendChildToContainer(container: Container, child: Instance): void {
     materialize(child)
-    container.renderer.setRoot(child.id)
+    const target = container.portalTarget
+    if (target) {
+      materialize(target)
+      container.renderer.appendChild(target.id, child.id)
+    } else {
+      container.renderer.setRoot(child.id)
+    }
   },
 
   appendInitialChild(parent: Instance, child: Instance | TextInstance): void {
@@ -386,15 +503,12 @@ export const hostConfig = {
     // Keep the element's own style. `visibility: hidden` skips the paint and
     // keeps the layout box, so replacing the whole style here would collapse
     // the box and lose every other style on the element.
-    //
-    // Hover and active go, because a hidden element must stay hidden. A hover
-    // style that sets `visibility` would otherwise paint an element React
-    // asked to hide.
-    const { hover: _hover, active: _active, ...base } = instance.props.style ?? {}
-    rendererFor(instance).setStyle(instance.id, { ...base, visibility: "hidden" })
+    stateFor(instance).hidden = true
+    rendererFor(instance).setStyle(instance.id, hiddenStyle(instance.props.style))
   },
 
   unhideInstance(instance: Instance, props: Props): void {
+    stateFor(instance).hidden = false
     rendererFor(instance).setStyle(instance.id, props.style ?? {})
   },
 

@@ -830,6 +830,37 @@ activation policy, so there is no menu-bar-agent mode yet. For a real
 background daemon, run the app from a `launchd` agent in
 `~/Library/LaunchAgents/`; launchd never activates the process.
 
+### Custom fonts
+
+`registerFont()` makes a font that is not installed on the machine available to
+`fontFamily`. It takes the bytes of a **TrueType or OpenType** file (`.ttf` or
+`.otf`).
+
+```tsx
+import { readFileSync } from 'node:fs'
+import { useGpuixRequired } from '@gpuix/react'
+
+function LoadFonts() {
+  const renderer = useGpuixRequired()
+  useEffect(() => {
+    renderer.registerFont?.(readFileSync('./Inter-Regular.ttf'))
+  }, [renderer])
+  return <div style={{ fontFamily: 'Inter' }}>Hello</div>
+}
+```
+
+Text that already named the family repaints with the font once it is
+registered, so there is no need to register before the first render. Register
+every weight and style of a family you use; text picks the closest one.
+
+The font must have family, full and PostScript names and a glyph for `"m"`.
+GPUI aborts the process on a font without the names, and silently drops a font
+without the glyph, so `registerFont()` throws for both and for bytes that are
+not a font. Fonts load into the process and last until it exits.
+
+WOFF and WOFF2 are not supported; convert them to TrueType first. The browser
+renderer does not have this method, use `FontFace` there.
+
 ### Let an agent drive the app
 
 Make focus opt-in through the environment, so a human run behaves normally and
@@ -1713,6 +1744,51 @@ that height. An explicit `height` still overrides both.
 />
 ```
 
+### Scrollbars
+
+A container with `overflow: 'scroll'` scrolls but draws no scrollbar. Give it a
+`scrollbarColor` and gpuix paints a thumb over its content, on each axis that has
+more to show:
+
+```tsx
+<div style={{ height: 300, overflow: 'scroll', scrollbarColor: '#8884', scrollbarWidth: 6 }}>
+  {rows}
+</div>
+```
+
+`scrollbarWidth` is the thickness in px and defaults to 6. The thumb is as long
+as the viewport is of the content (never under 20px), fully rounded, and sits
+on the right edge, or the bottom for sideways scrolling, leaving the corner free
+when both show. It is painted from the scroll offset in the frame the content
+moves, so a wheel tick costs nothing beyond that frame. It is a drawing, not a
+control: it takes no pointer input, so it cannot be dragged. It applies to
+`overflow: 'scroll'` containers and to `<virtual-list>`. A list's thumb comes
+from the heights the list has measured (and `estimatedItemHeight` for rows it has
+not reached), the same totals it scrolls by, so it only runs along the right edge
+and its length settles as rows are measured. `padding` on a `<virtual-list>` insets
+its rows on all four sides, and the thumb stays at the list's own edge, past the
+padding, where a browser puts a padded scroller's scrollbar.
+
+### Give memory back when idle
+
+A JavaScript engine collects on allocation pressure, so after a burst of work
+(the first mount, opening a large screen) the heap stays at its peak until the
+next burst. `collectGarbageWhenIdle()` runs one full collection once the app has
+stopped committing for a while, then waits for the next burst.
+
+```tsx
+import { collectGarbageWhenIdle } from '@gpuix/react'
+
+const stop = collectGarbageWhenIdle() // checks every 5s, collects after two quiet checks
+```
+
+It uses `Bun.gc(true)`, or `gc()` where Node runs with `--expose-gc`, and does
+nothing in a runtime that has neither. Quiet means no mutation batch reached a
+renderer and the process is under half a core. The batch count decides, not CPU
+alone, because a focused text field blinks its caret in native code and redraws
+twice a second. Pass `activity`, `collect`, `checkMs`, `quietChecks` or
+`busyCpu` to change what it watches or how often.
+
 ### Input in a search pill
 
 `<input>` has **no default inner padding** and paints text at the top of its
@@ -2209,17 +2285,68 @@ A filled child of a click target (switch thumb, radio dot, check icon) needs
 **`pointerEvents: "none"`**, or it eats the parent's click. For Select and
 Combobox rows, use the item primitive's `asChild` prop instead.
 
+### Portals
+
+`createPortal(children, target)` mounts `children` as the children of an element
+that is already mounted, wherever the calling component sits in the tree. Use it
+for a toast layer, a drag preview, or any content that belongs to another part of
+the window. Context still flows from the caller, as in React DOM.
+
+Take `target` from a `ref` and render the portal once it is set. A portal into an
+element that has not mounted has nowhere to attach.
+
+```tsx
+import { createPortal, type PublicInstance } from '@gpuix/react'
+
+function Screen() {
+  const [layer, setLayer] = useState<PublicInstance | null>(null)
+  return (
+    <>
+      <div ref={setLayer} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
+      <Sidebar>{layer && createPortal(<Toast />, layer)}</Sidebar>
+    </>
+  )
+}
+```
+
+The portal's children are appended after whatever the target already holds, and
+React keeps them in key order among themselves. `target` must belong to the same
+root as the component that calls `createPortal`.
+
+For floating menus that must paint above a `<virtual-list>`, use
+[`<anchored>`](#overlay-menus) rather than a portal: a portal changes where
+elements live in the tree, not the order gpui paints them in.
+
 ### Measure an element
 
 `getElementBounds(id)` returns the last painted box, or `null` if that node did
 not paint. It works on the live `GpuixRenderer` and on the test renderer.
 Bounds are recorded during **paint**, so read them after a frame, not in the
-same commit as mount.
+same commit as mount. The box is the element's border box, like a DOM
+`getBoundingClientRect`.
 
 ```tsx
 const box = renderer.getElementBounds?.(ref.current.id)
 // { x, y, width, height }
 ```
+
+### Find what is under a point
+
+`getElementsAt(x, y)` returns the ids of the elements whose last painted box
+holds a window point, topmost first, like the DOM's `elementsFromPoint`. It
+works on the live `GpuixRenderer` and on the test renderer.
+
+```tsx
+const [topmost] = renderer.getElementsAt?.(event.x, event.y) ?? []
+```
+
+It answers from the last frame, so an element that did not paint (hidden, or
+outside a virtual list's window) is never listed. `overflow: hidden` and
+`scroll` clip what lies outside them, `pointer-events: none` is skipped (and
+inherited, until a child sets `auto`), and a deferred
+[`<anchored>`](#overlay-menus) layer comes first, ordered by `priority`,
+because gpui paints it after the tree and outside the clip of its ancestors.
+Beyond that, tree order is paint order: gpuix has no z-index.
 
 ### Button
 
@@ -2927,6 +3054,8 @@ text imports no longer need a runtime flag.
 | Focus | `onFocus` | — |
 | Blur | `onBlur` | — |
 | Scroll | `onScroll` | `deltaX`, `deltaY`, `precise`, `touchPhase`, `modifiers` |
+| Scroll change | `onScrollChange` | `scrollX`, `scrollY` — `overflow: "scroll"` containers, not `<virtual-list>` |
+| Layout | `onLayout` | `width`, `height`, `x`, `y` — `<div>` and `<text>` only |
 | File drop | `onFileDrop` | `paths`, `x`, `y` — Unicode filesystem paths from Finder or the OS |
 | Change | `onChange` | `value` — `<input>` and `<textarea>` only |
 | Submit | `onSubmit` | `value` — `<input>` always, `<textarea>` when `onSubmit` is set |
@@ -2954,9 +3083,44 @@ Put the listener on a **`div`**, **`text`**, **`img`**, **`svg`**, **`input`**,
 </div>
 ```
 
+**`onScroll`** reports wheel input: the delta, before GPUI has applied it.
+**`onScrollChange`** reports the result, after any cause: the wheel, a
+scrollbar drag, `scrollTo`, `scrollIntoView`, or content that shrank under the
+offset. `scrollX` and `scrollY` are the pair `getScrollOffset` returns, 0 at the
+start and negative as the content scrolls. The offset at the first paint is the
+baseline and is not reported. Use `onVisibleRange` on a `<virtual-list>`.
+
+```tsx
+<div
+  style={{ height: 300, overflow: 'scroll' }}
+  onScrollChange={(event) => setStuck((event.scrollY ?? 0) < -80)}
+>
+  {rows}
+</div>
+```
+
+**`onLayout`** is `ResizeObserver` for an element. It fires after the first paint
+that has the listener and again each time the element's **size** changes, with
+its border box: `width` and `height`, and `x` and `y` in window pixels. Moving
+without resizing, as a row does when a list scrolls, fires nothing. Removing the
+listener and adding it back reports the size again. An element with
+`visibility: "hidden"` is not painted, so it reports nothing until it is shown.
+
+```tsx
+<div onLayout={(event) => setWidth(event.width ?? 0)} style={{ flex: 1 }} />
+```
+
+The event arrives after the frame that laid the element out, so a handler that
+sets state paints the new size one frame later. Read it for decisions such as
+which layout to render, not to position something against the element in the
+same frame.
+
 Keyboard and focus listeners create a persistent GPUI `FocusHandle`
 automatically. A listener alone does not put a `div` in the Tab order; add
 `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
+
+`onMouseLeave` also fires when the pointer leaves the **window** without a final
+move over the element, and the element's `hover` style ends with it.
 
 A node that listens for both `onMouseDown` and `onMouseMove` **captures the
 pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
@@ -3027,15 +3191,15 @@ CSS-like styling via the `style` prop:
 >   style, or pad the parent wrapper. The input clips to its own
 >   `borderRadius` automatically.
 
-**Layout:** `display` (`"flex"` | `"grid"`), `flexDirection`, `flexWrap`, `flexGrow`, `flexShrink`, `flexBasis`, `alignItems`, `alignSelf`, `alignContent`, `justifyContent`, `gap`, `rowGap`, `columnGap`, `gridTemplateColumns`, `gridTemplateRows`, `gridColumnMin`, `gridRowMin`
+**Layout:** `display` (`"flex"` | `"grid"`), `flexDirection`, `flexWrap`, `flexGrow`, `flexShrink`, `flexBasis`, `alignItems` (`"start"` | `"center"` | `"end"` | `"stretch"` | `"baseline"`), `alignSelf`, `alignContent`, `justifyContent` (adds `"space-between"`, `"space-around"` and `"space-evenly"`), `gap`, `rowGap`, `columnGap`, `gridTemplateColumns`, `gridTemplateRows`, `gridColumnMin`, `gridRowMin`
 
-**Sizing:** `width`, `height`, `minWidth`, `minHeight`, `maxWidth`, `maxHeight` — accepts pixels (number) or percentages (string like `"100%"`)
+**Sizing:** `width`, `height`, `minWidth`, `minHeight`, `maxWidth`, `maxHeight` — accepts pixels (number) or percentages (string like `"100%"`). `aspectRatio` (width divided by height) sizes whichever axis has no definite size
 
 **Spacing:** `padding`, `paddingTop/Right/Bottom/Left`, `margin`, `marginTop/Right/Bottom/Left`
 
 **Position:** `position` (`"relative"` | `"absolute"` | `"fixed"`), `top`, `right`, `bottom`, `left` — `"fixed"` lays out like `"absolute"`, because GPUI has no scrolling document to be fixed against
 
-**Visual:** `background`, `backgroundColor`, `color`, `opacity`, `cursor`, `pointerEvents`, `borderRadius`, `borderTopLeftRadius`, `borderTopRightRadius`, `borderBottomLeftRadius`, `borderBottomRightRadius`, `borderWidth`, `borderTopWidth`, `borderRightWidth`, `borderBottomWidth`, `borderLeftWidth`, `borderColor`, `boxShadow`, `outlineWidth`, `outlineColor`, `outlineOffset`
+**Visual:** `background`, `backgroundColor`, `color`, `opacity`, `cursor`, `pointerEvents`, `borderRadius`, `borderTopLeftRadius`, `borderTopRightRadius`, `borderBottomLeftRadius`, `borderBottomRightRadius`, `borderWidth`, `borderTopWidth`, `borderRightWidth`, `borderBottomWidth`, `borderLeftWidth`, `borderColor`, `borderStyle` (`"solid"` | `"dashed"`), `boxShadow`, `outlineWidth`, `outlineColor`, `outlineOffset`
 
 ### Cursors
 
@@ -3126,8 +3290,9 @@ Limited relative-color forms can derive a new color from a base value:
 />
 ```
 
-`boxShadow` accepts one structured shadow. Its fields are `offsetX`, `offsetY`,
-`blurRadius`, `spreadRadius`, and `color`:
+`boxShadow` accepts one structured shadow or an array of them, painted in the
+order given. Its fields are `offsetX`, `offsetY`, `blurRadius`, `spreadRadius`,
+`color`, and `inset`, which draws inside the border box:
 
 ```tsx
 <div
@@ -3139,6 +3304,15 @@ Limited relative-color forms can derive a new color from a base value:
       spreadRadius: 0,
       color: '#00000033',
     },
+  }}
+/>
+
+<div
+  style={{
+    boxShadow: [
+      { offsetX: 0, offsetY: 1, blurRadius: 2, spreadRadius: 0, color: '#0000004d' },
+      { offsetX: 0, offsetY: 0, blurRadius: 0, spreadRadius: 1, color: '#ffffff1a', inset: true },
+    ],
   }}
 />
 ```

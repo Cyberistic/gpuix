@@ -26,6 +26,9 @@ use crate::retained_tree::RetainedTree;
 #[derive(Clone, Debug, PartialEq)]
 pub struct HighlightSpec {
     pub query: String,
+    /// `query` as a searcher. It is shared by every text group a keystroke
+    /// visits, so it is built here and not inside the per-group search.
+    pub needle: Needle,
     pub case_sensitive: bool,
     pub whole_word: bool,
     /// `[start, end)` in UTF-16 code units, indexing the declaring subtree's
@@ -144,9 +147,11 @@ impl HighlightSpec {
         base.a = 0.30;
         let mut active = theme.accent;
         active.a = 0.65;
+        let case_sensitive = flag("caseSensitive");
         Some(Self {
+            needle: Needle::new(&query, case_sensitive),
             query,
-            case_sensitive: flag("caseSensitive"),
+            case_sensitive,
             whole_word: flag("wholeWord"),
             ranges,
             color: color("color").map(Into::into).unwrap_or(base),
@@ -162,6 +167,50 @@ impl HighlightSpec {
                 .map(|n| n as f32)
                 .unwrap_or(2.0),
         })
+    }
+}
+
+/// A query ready to search with: lowercased unless the match is case
+/// sensitive, behind a `memmem` searcher that is built once. The standard
+/// library builds a fresh searcher for every `match_indices` call, and a
+/// keystroke makes one call per text group, which on a long document cost more
+/// than scanning the text.
+#[derive(Clone)]
+pub struct Needle {
+    text: Arc<str>,
+    finder: Arc<memchr::memmem::Finder<'static>>,
+}
+
+impl Needle {
+    pub fn new(query: &str, case_sensitive: bool) -> Self {
+        let text: Arc<str> = if case_sensitive {
+            query.into()
+        } else {
+            query.to_lowercase().into()
+        };
+        let finder = Arc::new(memchr::memmem::Finder::new(text.as_bytes()).into_owned());
+        Self { text, finder }
+    }
+
+    /// Non-overlapping byte ranges of the needle in `haystack`, leftmost first.
+    /// A UTF-8 needle only matches on character boundaries of UTF-8 text.
+    fn find<'a>(&'a self, haystack: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
+        let length = self.text.len();
+        self.finder
+            .find_iter(haystack.as_bytes())
+            .map(move |start| start..start + length)
+    }
+}
+
+impl PartialEq for Needle {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
+}
+
+impl std::fmt::Debug for Needle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Needle").field(&self.text).finish()
     }
 }
 
@@ -396,17 +445,15 @@ fn matches_in(
     }
     let mut out = Vec::new();
     if spec.case_sensitive {
-        for (ix, hit) in text.match_indices(spec.query.as_str()) {
-            let range = ix..ix + hit.len();
+        for range in spec.needle.find(text) {
             if !spec.whole_word || is_whole_word(text, &range) {
                 out.push(range);
             }
         }
         return out;
     }
-    let needle = spec.query.to_lowercase();
-    for (ix, hit) in folded.match_indices(needle.as_str()) {
-        let (Some(&start), Some(&end)) = (fold_map.get(ix), fold_map.get(ix + hit.len())) else {
+    for hit in spec.needle.find(folded) {
+        let (Some(&start), Some(&end)) = (fold_map.get(hit.start), fold_map.get(hit.end)) else {
             continue;
         };
         let range = start as usize..end as usize;
@@ -700,6 +747,7 @@ mod tests {
     fn spec(query: &str) -> HighlightSpec {
         HighlightSpec {
             query: query.to_string(),
+            needle: Needle::new(query, false),
             case_sensitive: false,
             whole_word: false,
             ranges: Vec::new(),
@@ -709,6 +757,39 @@ mod tests {
             match_index_offset: 0,
             radius: 2.0,
         }
+    }
+
+    /// The searcher must report what `str::match_indices` always did: leftmost,
+    /// non-overlapping, on character boundaries.
+    #[test]
+    fn a_needle_finds_what_match_indices_finds() {
+        for (haystack, query) in [
+            ("aaaa", "aa"),
+            ("aaa", "aa"),
+            ("abcabcabc", "abc"),
+            ("héllo wörld héllo", "héllo"),
+            ("日本語の日本語", "日本語"),
+            ("a😀b😀c", "😀"),
+            ("short", "much longer than the text"),
+            ("", "x"),
+        ] {
+            let expected: Vec<_> = haystack
+                .match_indices(query)
+                .map(|(start, hit)| start..start + hit.len())
+                .collect();
+            let found: Vec<_> = Needle::new(query, true).find(haystack).collect();
+            assert_eq!(found, expected, "{query:?} in {haystack:?}");
+        }
+    }
+
+    #[test]
+    fn a_case_insensitive_needle_searches_the_lowercased_text() {
+        let needle = Needle::new("FOO", false);
+        assert_eq!(needle.find("a foo and a FOO").collect::<Vec<_>>(), vec![2..5]);
+        assert_eq!(
+            needle.find(&"a foo and a FOO".to_lowercase()).collect::<Vec<_>>(),
+            vec![2..5, 12..15]
+        );
     }
 
     fn find(text: &str, spec: &HighlightSpec) -> Vec<Range<usize>> {

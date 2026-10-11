@@ -91,6 +91,13 @@ export interface Container {
   windowKeyEventId: number
   windowSelectionEventId: number
   onEvent?: (event: EventPayload) => void
+  /**
+   * Set on a portal's container. Its children mount under this element instead
+   * of becoming the window's root. The container inherits everything else from
+   * the root container it was made from, so both share one mutation queue and
+   * one event map.
+   */
+  portalTarget?: Instance
 }
 
 export interface Instance {

@@ -1,10 +1,22 @@
 import { useLayoutEffect } from "react"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { AnimatePresence, motion, usePresence } from "../index"
 import { flushSync } from "../reconciler/reconciler"
 import { createTestRoot, hasNativeTestRenderer } from "../testing"
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
+
+/**
+ * Waits for AnimatePresence to drop a child that has nothing to animate. The
+ * removal is a state update from a passive effect, which React's scheduler runs
+ * on its own clock, so a fixed sleep races it. Poll for the outcome instead.
+ */
+async function expectRemoved(renderer: ReturnType<typeof createTestRoot>["renderer"]) {
+  await vi.waitFor(() => {
+    renderer.flush()
+    expect(renderer.getAllText()).toEqual([])
+  })
+}
 
 describeNative("AnimatePresence", () => {
   it("keeps an exiting motion.div until the exit target finishes", () => {
@@ -85,10 +97,7 @@ describeNative("AnimatePresence", () => {
 
     render(<App show />)
     render(<App show={false} />)
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    renderer.flush()
-
-    expect(renderer.getAllText()).toEqual([])
+    await expectRemoved(renderer)
   })
 
   it("exits with the latest props for a stable key", () => {
@@ -467,10 +476,7 @@ describeNative("AnimatePresence", () => {
     render(<App show replace />)
     staleRemove?.()
     render(<App show={false} replace />)
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    renderer.flush()
-
-    expect(renderer.getAllText()).toEqual([])
+    await expectRemoved(renderer)
   })
 })
 

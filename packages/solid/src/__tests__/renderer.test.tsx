@@ -193,4 +193,17 @@ describe.skipIf(!hasNativeTestRenderer)("Solid renderer", () => {
     })
     expect(completions).toBe(1)
   })
+
+  it("delivers onLayout with the painted size", () => {
+    const sizes: unknown[] = []
+    const app = createTestRoot()
+    app.render(() => (
+      <div
+        style={{ width: 90, height: 30 }}
+        onLayout={(event) => sizes.push([event.width, event.height])}
+      />
+    ))
+    app.renderer.dispatchNativeEvents()
+    expect(sizes).toEqual([[90, 30]])
+  })
 })

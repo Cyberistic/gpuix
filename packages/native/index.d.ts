@@ -162,8 +162,22 @@ export declare class GpuixRenderer {
    * an `<img>` host node. Prefer `setImagePixels` for live waveforms.
    */
   setImage(elementId: number, bytes: Buffer): void
+  /**
+   * Make the fonts in a TrueType or OpenType file (or a collection) usable by
+   * `fontFamily`, under the family names the file declares. Call it before
+   * the text that names the family is first laid out: a family that did not
+   * exist then has already fallen back to another font.
+   */
+  registerFont(data: Buffer): void
   getAutomationTree(): string
   getElementBounds(id: number): ElementBounds | null
+  /**
+   * The elements whose last painted box holds the window point `(x, y)`,
+   * topmost first, like the DOM's `elementsFromPoint`. An element that did
+   * not paint is never listed, `overflow: hidden | scroll` clips what lies
+   * outside it, and `pointer-events: none` is skipped.
+   */
+  getElementsAt(x: number, y: number): Array<number>
   getAllText(): Array<string>
   getPaintedText(): Array<string>
   /**
@@ -265,6 +279,11 @@ export declare class TestGpuixRenderer {
    */
   simulateMouseMove(x: number, y: number, pressedButton?: number | undefined | null, modifiers?: string | undefined | null): void
   /**
+   * Simulate the pointer leaving the window, as the platform reports it when
+   * the cursor crosses the window edge: there is no final mouse move.
+   */
+  simulateMouseExit(x: number, y: number): void
+  /**
    * Focus an element by its numeric ID.
    * The element must have a FocusHandle (created by sync_focus_handles when
    * the element has keyDown, keyUp, focus, or blur listeners).
@@ -356,6 +375,8 @@ export declare class TestGpuixRenderer {
   setImagePixels(elementId: number, width: number, height: number, pixels: Buffer, format?: string | undefined | null): void
   /** Encoded image bytes onto an `<img>` host node. */
   setImage(elementId: number, bytes: Buffer): void
+  /** Make the fonts in a TrueType or OpenType file usable by `fontFamily`. */
+  registerFont(data: Buffer): void
   /**
    * The logical scroll anchor of a `<virtual-list>`:
    * `[itemIndex, offsetInItemPx, viewportHeightPx]`, or null for anything
@@ -405,6 +426,8 @@ export declare class TestGpuixRenderer {
   getAutomationTree(): string
   /** Last painted bounds for an element, or null if it was not painted. */
   getElementBounds(id: number): ElementBounds | null
+  /** Ids under the window point, topmost first. See the live renderer. */
+  getElementsAt(x: number, y: number): Array<number>
   clockPause(): number
   clockSet(nowMs: number): number
   clockFastForward(deltaMs: number): number
@@ -574,6 +597,18 @@ export interface EventPayload {
   startIndex?: number
   /** Exclusive end of the visible logical range. Populated for: visibleRange. */
   endIndex?: number
+  /**
+   * Border-box size of the element, in pixels. With `x` and `y`, its position
+   * in window coordinates. Populated for: layout.
+   */
+  width?: number
+  height?: number
+  /**
+   * Scroll offset of the element, the pair `getScrollOffset` returns: 0 at the
+   * start and negative as the content moves. Populated for: scrollChange.
+   */
+  scrollX?: number
+  scrollY?: number
   /**
    * Matches found by this element's `highlight` prop. Counted once per match
    * even when it is split across several painted runs, and it counts every
