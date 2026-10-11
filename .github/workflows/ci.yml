@@ -413,8 +413,9 @@ jobs:
           pattern: bindings-*
           path: packages/native/artifacts
 
-      - name: Create npm dirs and move artifacts
+      - name: Build native runtime and collect platform packages
         run: |
+          bun run build:js
           bunx @napi-rs/cli create-npm-dirs
           bunx @napi-rs/cli artifacts
         working-directory: packages/native
