@@ -1765,9 +1765,7 @@ control: it takes no pointer input, so it cannot be dragged. It applies to
 `overflow: 'scroll'` containers and to `<virtual-list>`. A list's thumb comes
 from the heights the list has measured (and `estimatedItemHeight` for rows it has
 not reached), the same totals it scrolls by, so it only runs along the right edge
-and its length settles as rows are measured. To draw it at the edge of a padded
-box instead (where a browser puts a scroller's scrollbar), give `scrollbarColor`
-to the box that has the `<virtual-list>` as a direct child.
+and its length settles as rows are measured.
 
 ### Give memory back when idle
 

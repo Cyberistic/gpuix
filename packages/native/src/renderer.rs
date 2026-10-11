@@ -5765,26 +5765,13 @@ pub(crate) fn build_host_container(
     }
 
     // Last, so the thumb paints over the content.
-    if let Some(style) = style {
-        if let Some(handle) = ctx.scroll_handles.get(&element.id) {
-            if let Some(thumbs) = ThumbStyle::of(
-                style,
-                style.overflow_x.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
-                style.overflow_y.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
-            ) {
-                el = el.child(scrollbar_overlay(handle.clone(), thumbs));
-            }
-        } else if let Some(thumbs) = ThumbStyle::of(style, false, true) {
-            // A box around a virtual list draws the list's thumb at the box's own
-            // edge, past any padding, as a scroller's scrollbar sits in the DOM.
-            let list = element.children.iter().find_map(|child| {
-                ctx.virtual_lists
-                    .get(child)
-                    .map(|entry| entry.state.clone())
-            });
-            if let Some(list) = list {
-                el = el.child(list_scrollbar_overlay(list, thumbs));
-            }
+    if let (Some(style), Some(handle)) = (style, ctx.scroll_handles.get(&element.id)) {
+        if let Some(thumbs) = ThumbStyle::of(
+            style,
+            style.overflow_x.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
+            style.overflow_y.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
+        ) {
+            el = el.child(scrollbar_overlay(handle.clone(), thumbs));
         }
     }
 
@@ -5936,26 +5923,6 @@ fn list_scroll_extent(
             state.scroll_px_offset_for_scrollbar(),
         ),
     }
-}
-
-/// The thumb of the virtual list inside a container, painted over the
-/// container's padding box. See `scrollbar_overlay`; a list is not shifted by
-/// its scroll offset, so the viewport is the box itself.
-fn list_scrollbar_overlay(state: gpui::ListState, thumbs: ThumbStyle) -> gpui::AnyElement {
-    use gpui::prelude::*;
-
-    gpui::canvas(
-        |_, _, _| (),
-        move |bounds, _, window, _| {
-            let (max, offset) = list_scroll_extent(&state);
-            paint_scrollbars(window, bounds.origin, bounds.size, max, offset, thumbs);
-        },
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-    .into_any_element()
 }
 
 /// A virtual list with its thumb painted over it.
