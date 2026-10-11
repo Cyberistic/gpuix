@@ -19,7 +19,7 @@ import { createTestRoot, hasNativeTestRenderer } from "../testing"
 import { startFrameLoop } from "../reconciler/renderer.js"
 import { motion } from "../index"
 import type { EventPayload } from "@gpuix/native"
-import { expectScreenshotsDiffer, SHOTS_DIR } from "./test-utils"
+import { expectScreenshotsDiffer, expectScreenshotsEqual, SHOTS_DIR } from "./test-utils"
 
 // All tests require the native GPUI test renderer (cargo build with test-support).
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
@@ -430,6 +430,59 @@ describeNative("events", () => {
           "not hovered",
         ]
       `)
+    })
+  })
+
+  describe("pointer leaving the window", () => {
+    it("fires mouseLeave without a final mouse move", () => {
+      const log: string[] = []
+      testRoot.render(
+        <div
+          style={{ width: 200, height: 100 }}
+          onMouseEnter={() => log.push("enter")}
+          onMouseLeave={() => log.push("leave")}
+        />
+      )
+
+      testRoot.renderer.nativeSimulateMouseMove(50, 50)
+      expect(log).toEqual(["enter"])
+
+      // The platform reports the exit at the window edge, not a move outside.
+      testRoot.renderer.nativeSimulateMouseExit(199, 50)
+      expect(log).toEqual(["enter", "leave"])
+
+      testRoot.renderer.nativeSimulateMouseMove(60, 50)
+      expect(log).toEqual(["enter", "leave", "enter"])
+    })
+
+    it("drops the hover style too", () => {
+      testRoot.render(
+        <div style={{ width: "100%", height: "100%", backgroundColor: "#11111b" }}>
+          <div
+            style={{
+              width: 200,
+              height: 100,
+              backgroundColor: "#1e1e2e",
+              hover: { backgroundColor: "#f38ba8" },
+            }}
+          />
+        </div>
+      )
+      fs.mkdirSync(SHOTS_DIR, { recursive: true })
+      const idle = `${SHOTS_DIR}/pointer-exit-idle.png`
+      const hovered = `${SHOTS_DIR}/pointer-exit-hovered.png`
+      const exited = `${SHOTS_DIR}/pointer-exit-exited.png`
+      for (const file of [idle, hovered, exited]) fs.rmSync(file, { force: true })
+
+      testRoot.renderer.nativeSimulateMouseMove(1200, 700)
+      testRoot.renderer.captureScreenshot(idle)
+      testRoot.renderer.nativeSimulateMouseMove(100, 50)
+      testRoot.renderer.captureScreenshot(hovered)
+      expectScreenshotsDiffer(idle, hovered)
+
+      testRoot.renderer.nativeSimulateMouseExit(199, 50)
+      testRoot.renderer.captureScreenshot(exited)
+      expectScreenshotsEqual(idle, exited)
     })
   })
 

@@ -61,6 +61,7 @@ interface NativeTestRendererApi extends NativeRenderer {
     pressedButton?: number,
     modifiers?: string
   ): void
+  simulateMouseExit(x: number, y: number): void
   simulateMouseDown(x: number, y: number, button: number, modifiers?: string): void
   simulateMouseUp(x: number, y: number, button: number, modifiers?: string): void
   simulateFileDrop(x: number, y: number, paths: string[]): void
@@ -69,6 +70,7 @@ interface NativeTestRendererApi extends NativeRenderer {
   getAutomationTree(): string
   getRetainedElementCount(): number
   getElementBounds(elementId: number): ElementBounds | null
+  getElementsAt(x: number, y: number): number[]
   clockPause(): number
   clockSet(nowMs: number): number
   clockFastForward(deltaMs: number): number
@@ -81,6 +83,8 @@ interface NativeTestRendererApi extends NativeRenderer {
   scrollToItem(elementId: number, index: number, offsetInItem?: number): void
   scrollIntoView(elementId: number): void
   setImage(elementId: number, bytes: Buffer | Uint8Array): void
+  /** Make a TrueType or OpenType font usable by `fontFamily`. */
+  registerFont(bytes: Buffer | Uint8Array): void
   setImagePixels(
     elementId: number,
     width: number,
@@ -355,6 +359,15 @@ export class TestRenderer implements NativeRenderer {
     this.native.flush()
   }
 
+  /** End-to-end: the pointer leaves the window at (x, y), the way the platform
+   *  reports it, with no mouse move after the last position inside. */
+  nativeSimulateMouseExit(x: number, y: number): void {
+    this.native.flush()
+    this.native.simulateMouseExit(x, y)
+    this.dispatchNativeEvents()
+    this.native.flush()
+  }
+
   /** End-to-end: simulate mouse down through GPUI hit testing →
    *  dispatch resulting events to the framework.
    *  @param button - 0=left (default), 1=middle, 2=right */
@@ -478,6 +491,11 @@ export class TestRenderer implements NativeRenderer {
     return this.native.getElementBounds(elementId)
   }
 
+  /** Ids of the elements under the window point, topmost first. */
+  getElementsAt(x: number, y: number): number[] {
+    return this.native.getElementsAt(x, y)
+  }
+
   clockPause(): number {
     return this.native.clockPause()
   }
@@ -564,6 +582,11 @@ export class TestRenderer implements NativeRenderer {
   setImage(elementId: number, bytes: Buffer | Uint8Array): void {
     this.native.flush()
     this.native.setImage(elementId, bytes as Buffer)
+    this.native.flush()
+  }
+
+  registerFont(bytes: Buffer | Uint8Array): void {
+    this.native.registerFont(bytes as Buffer)
     this.native.flush()
   }
 

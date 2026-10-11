@@ -100,6 +100,8 @@ export interface BoxShadow {
   blurRadius: number
   spreadRadius: number
   color: string
+  /** Draw inside the border box, like CSS `inset`. */
+  inset?: boolean
 }
 
 export interface LinearGradientStop {
@@ -177,7 +179,12 @@ export interface StyleDesc {
   borderTopRightRadius?: number
   borderBottomLeftRadius?: number
   borderBottomRightRadius?: number
-  boxShadow?: BoxShadow
+  /** One shadow, or a list painted in the order given. */
+  boxShadow?: BoxShadow | BoxShadow[]
+  /** Applies to every side. */
+  borderStyle?: "solid" | "dashed"
+  /** Width divided by height. Fills in whichever axis has no definite size. */
+  aspectRatio?: number
   /** CSS `outline`: a line outside the border box. Takes no layout space, so it
    *  can appear on focus without moving anything. Width defaults to 1. */
   outlineWidth?: number
@@ -198,6 +205,12 @@ export interface StyleDesc {
   overflow?: string
   overflowX?: string
   overflowY?: string
+  /** Colour of the scrollbar thumb. Setting it paints a native thumb over a container
+   *  that scrolls (`overflow: "scroll"`), on each axis that has more to show. The
+   *  thumb follows the scroll offset in the frame it paints, and takes no pointer input. */
+  scrollbarColor?: string
+  /** Thickness of that thumb in px. Defaults to 6. */
+  scrollbarWidth?: number
 
   cursor?: CursorValue
   /** `"auto"` blocks hits behind this element **and its wheel**. `"none"` never
@@ -423,6 +436,24 @@ export interface HostProps {
 
   // ── Scroll events ──────────────────────────────────────────────
   onScroll?: (event: EventPayload) => void
+
+  /**
+   * The scroll offset of a `overflow: "scroll"` element changed, however it
+   * moved: wheel, scrollbar drag, `scrollTo`, `scrollIntoView`. `scrollX` and
+   * `scrollY` are the pair `getScrollOffset` returns: 0 at the start and
+   * negative as the content scrolls. The position at the first paint is not
+   * reported, only movement after it. Not for `<virtual-list>`; use
+   * `onVisibleRange`.
+   */
+  onScrollChange?: (event: EventPayload) => void
+
+  // ── Layout events ──────────────────────────────────────────────
+  /**
+   * The element's border box, reported after the first paint and each time its
+   * size changes: `width` and `height`, plus `x` and `y` in window coordinates.
+   * Moving without resizing reports nothing. Supported on `div` and `text`.
+   */
+  onLayout?: (event: EventPayload) => void
 
   // ── File drop (Finder / OS paths) ───────────────────────────────
   onFileDrop?: (event: EventPayload) => void
@@ -655,6 +686,7 @@ export type NativeRenderer = MutationHost &
       | "setWindowKeyEvents"
       | "setWindowSelectionChange"
       | "getElementBounds"
+      | "getElementsAt"
       | "scrollTo"
       | "scrollToItem"
       | "scrollIntoView"
@@ -668,6 +700,7 @@ export type NativeRenderer = MutationHost &
       | "getWindowSize"
       | "getWindowInsets"
       | "setWindowTitle"
+      | "registerFont"
       | "promptForPaths"
       | "activateWindow"
       | "minimizeWindow"

@@ -34,6 +34,11 @@
       "import": "./dist/cpu-throttle.js",
       "default": "./dist/cpu-throttle.js"
     },
+    "./idle-gc": {
+      "types": "./dist/idle-gc.d.ts",
+      "import": "./dist/idle-gc.js",
+      "default": "./dist/idle-gc.js"
+    },
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js",

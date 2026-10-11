@@ -7,6 +7,12 @@
  *
  * THROTTLE=utility|background|maintenance re-execs under taskpolicy -c.
  * A throttled run logs numbers and skips the default budgets.
+ *
+ * Run it through `bun run test:perf`: that sets NODE_ENV=production, so React
+ * is the build apps ship. React's development build measures and diffs every
+ * component it renders for its DevTools tracks, which more than doubles a
+ * commit here and says nothing about what users get. Files run one at a time,
+ * so two renderers do not compete for the same cores.
  */
 
 import React from 'react'
@@ -188,6 +194,8 @@ describeNative('chat performance', () => {
 
     // First query: collects and folds the subtree once. Not measured.
     render(app('p'))
+    // So are a few more, which the engine needs to compile the commit path.
+    for (let i = 0; i < WARMUP; i++) render(app(i % 2 === 0 ? 'pe' : 'per'))
 
     const word = 'performance of the renderer'
     const keystrokes: number[] = []
