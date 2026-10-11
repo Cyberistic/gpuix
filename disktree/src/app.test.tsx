@@ -15,6 +15,7 @@ import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 
 import { DisktreeApp, createDisktreeStore } from './app.tsx'
+import { displayPath } from './core.ts'
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const SHOTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'screenshots')
@@ -74,7 +75,9 @@ describeNative('disktree', () => {
     await app.mouse.click(onBand)
     expect(await name()).toBe('node_modules')
     // Path and free space differ per machine; the rest is fixed by the fixture.
-    const panel = (await app.getByTestId('panel').textContent()).replace(/\/.*?node_modules3/, '…3').replace(/DISK.*/, '')
+    const panel = (await app.getByTestId('panel').textContent())
+      .replace(displayPath(path.join(root, 'node_modules')), '…')
+      .replace(/DISK.*/, '')
     expect(panel).toMatchInlineSnapshot(`"SELECTIONnode_modules…3.5MiBOF SCAN68%FILES3LAST WRITEjust nowKINDCache · reinstallableShow in FinderWORTH A LOOK4.5 MiBnode_modulesreinstallable3.5 MiB.cacheregenerable1.0 MiB"`)
     expect(await app.getByTestId('crumb-0').textContent()).toBe('node_modules')
     await app.screenshot({ path: path.join(SHOTS, 'node-modules.png') })
