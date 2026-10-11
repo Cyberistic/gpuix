@@ -1,14 +1,14 @@
 import path from "path"
 import { describe, expect, it } from "vitest"
 import { createTestRoot, hasNativeTestRenderer } from "../testing.js"
-import { readPixels, SHOTS_DIR } from "./test-utils.js"
+import { readLogicalPixels, SHOTS_DIR } from "./test-utils.js"
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 const THUMB = "#ff0000"
 
 /** Rows (within the scroller's 100px) holding thumb-coloured pixels in a column. */
-function thumbRows(pixels: ReturnType<typeof readPixels>, x: number, top = 0) {
+function thumbRows(pixels: ReturnType<typeof readLogicalPixels>, x: number, top = 0) {
   const rows: number[] = []
   for (let y = 0; y < 100; y++) {
     const [r, g, b] = pixels.at(x, top + y)
@@ -45,7 +45,7 @@ function shoot(
     }
     const file = path.join(SHOTS_DIR, `scrollbar-${contentHeight}-${scrollTo ?? "top"}.png`)
     renderer.captureScreenshot(file)
-    return readPixels(file)
+    return readLogicalPixels(file)
   } finally {
     unmount()
   }
@@ -95,7 +95,7 @@ describeNative("scrollbarColor", () => {
       renderer.dispatchNativeEvents()
       const file = path.join(SHOTS_DIR, "scrollbar-both.png")
       renderer.captureScreenshot(file)
-      const pixels = readPixels(file)
+      const pixels = readLogicalPixels(file)
       const isThumb = (x: number, y: number) => {
         const [r, g, b] = pixels.at(x, y)
         return r > 200 && g < 60 && b < 60
@@ -152,7 +152,7 @@ describeNative("scrollbarColor on a <virtual-list>", () => {
         `scrollbar-list-${scrollToRow ?? "top"}-${scrollbarColor ? "on" : "off"}.png`
       )
       renderer.captureScreenshot(file)
-      const pixels = readPixels(file)
+      const pixels = readLogicalPixels(file)
       const rows: number[] = []
       for (let y = 0; y < 160; y++) {
         const [r, g, b] = pixels.at(97, y)
@@ -209,7 +209,7 @@ describeNative("scrollbarColor on a <virtual-list>", () => {
       renderer.dispatchNativeEvents()
       const file = path.join(SHOTS_DIR, "scrollbar-list-tall-rows.png")
       renderer.captureScreenshot(file)
-      const pixels = readPixels(file)
+      const pixels = readLogicalPixels(file)
       const rows: number[] = []
       for (let y = 0; y < 400; y++) {
         const [r, g, b] = pixels.at(97, y)
@@ -250,7 +250,7 @@ describeNative("scrollbarColor on a box around a <virtual-list>", () => {
       renderer.dispatchNativeEvents()
       const file = path.join(SHOTS_DIR, "scrollbar-list-box.png")
       renderer.captureScreenshot(file)
-      const pixels = readPixels(file)
+      const pixels = readLogicalPixels(file)
       const thumbAt = (x: number) => {
         for (let y = 0; y < 160; y++) {
           const [r, g, b] = pixels.at(x, y)
