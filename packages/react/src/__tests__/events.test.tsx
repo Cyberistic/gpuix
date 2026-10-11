@@ -127,7 +127,7 @@ describe("frame loop", () => {
   it("keeps ticking until a later false, then exits once", async () => {
     let ticks = 0
     let terminated = 0
-    const loop = startFrameLoop(
+    await new Promise<void>((resolve) => startFrameLoop(
       {
         requiresTick: () => true,
         tick: () => {
@@ -139,13 +139,12 @@ describe("frame loop", () => {
         frameMs: 5,
         onTerminated: () => {
           terminated += 1
+          resolve()
         },
       },
-    )
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    ))
     expect(ticks).toBe(3)
     expect(terminated).toBe(1)
-    loop.stop()
   })
 
   it("keeps pumping after tick throws", async () => {
