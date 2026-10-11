@@ -1765,7 +1765,9 @@ control: it takes no pointer input, so it cannot be dragged. It applies to
 `overflow: 'scroll'` containers and to `<virtual-list>`. A list's thumb comes
 from the heights the list has measured (and `estimatedItemHeight` for rows it has
 not reached), the same totals it scrolls by, so it only runs along the right edge
-and its length settles as rows are measured.
+and its length settles as rows are measured. `padding` on a `<virtual-list>` insets
+its rows on all four sides, and the thumb stays at the list's own edge, past the
+padding, where a browser puts a padded scroller's scrollbar.
 
 ### Give memory back when idle
 

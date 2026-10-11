@@ -223,3 +223,54 @@ describeNative("scrollbarColor on a <virtual-list>", () => {
     }
   })
 })
+
+describeNative("padding on a <virtual-list>", () => {
+  const ROW = "#00ff00"
+
+  it("insets the rows on every side and keeps the thumb at the list's own edge", () => {
+    const { render, renderer, unmount } = createTestRoot()
+    try {
+      // 30 rows of 40px in a 160px list: the rows get 60px of the 100px.
+      render(
+        <virtual-list
+          overdraw={0}
+          estimatedItemHeight={40}
+          style={{
+            width: 100,
+            height: 160,
+            paddingTop: 20,
+            paddingLeft: 10,
+            paddingRight: 30,
+            backgroundColor: "#202020",
+            scrollbarColor: THUMB,
+          }}
+        >
+          {Array.from({ length: 30 }, (_, index) => (
+            <div key={index} style={{ height: 40, flexShrink: 0, backgroundColor: ROW }} />
+          ))}
+        </virtual-list>
+      )
+      renderer.dispatchNativeEvents()
+      const file = path.join(SHOTS_DIR, "scrollbar-list-padded.png")
+      renderer.captureScreenshot(file)
+      const pixels = readLogicalPixels(file)
+      const rows = { left: Infinity, right: -Infinity, top: Infinity }
+      let thumbX = -1
+      for (let y = 0; y < 160; y++) {
+        for (let x = 0; x < 100; x++) {
+          const [r, g, b] = pixels.at(x, y)
+          if (g > 200 && r < 60 && b < 60) {
+            rows.left = Math.min(rows.left, x)
+            rows.right = Math.max(rows.right, x)
+            rows.top = Math.min(rows.top, y)
+          }
+          if (r > 200 && g < 60 && b < 60) thumbX = Math.max(thumbX, x)
+        }
+      }
+      expect(rows).toEqual({ left: 10, right: 69, top: 20 })
+      expect(thumbX, "the thumb sits in the right padding, at the list's edge").toBe(99)
+    } finally {
+      unmount()
+    }
+  })
+})
