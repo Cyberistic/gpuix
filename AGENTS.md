@@ -147,6 +147,10 @@ React and Solid keep only framework scheduling, context, JSX integration, and
 components. React preserves its public testing and automation subpaths as thin
 adapters or re-exports. Do not copy shared runtime code back into an adapter.
 
+`@gpuix/native/runtime` owns the desktop pump. On macOS it wakes on GPUI's
+display link, with a 100 ms fallback when no wake arrives. `tick()` must stay
+non-blocking so Node.js and Bun I/O can run. Explicit `frameMs` uses timer polling.
+
 The native package is ESM-first. Generate `index.js` with
 `napi build --platform --esm --js index.js`. `index.cjs` exists only for the
 documented Hermes CJS runtime. Keep both loaders beside the `.node` file.

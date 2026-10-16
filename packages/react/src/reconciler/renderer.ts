@@ -78,34 +78,12 @@ export const enableAutomation: (renderer: LiveAutomationRenderer) => void =
 /**
  * Drive GPUI until the last window closes, then run `onTerminated`.
  *
- * On macOS, `renderer.tick()` pumps AppKit and asks GPUI for a frame, so it
- * must be called repeatedly. Do NOT call it from a `setImmediate` loop: that
- * spins the CPU at tens of thousands of ticks per second (measured: 73% CPU on
- * an idle app, versus 1.5% when paced).
- *
- * On Windows and Linux, GPUI owns a blocking event loop on a Rust UI thread.
- * `tick()` does not pump that loop. It only reports whether the UI thread is
- * still inside `Platform::run`. The timer still exists so last-window-close
- * can return false and `render()` can `process.exit`, matching macOS.
- *
- * Pacing lives in JS rather than blocking inside `tick()` on purpose. Node owns
- * the event loop here, so a blocking tick would stall every timer, promise and
- * socket in the process.
- *
- * Each frame is scheduled only after the previous one finishes, so a slow frame
- * delays the next one instead of letting timers pile up.
- *
- * If `tick()` already used the whole budget, wait 0ms. A fixed 8ms sleep after a
- * 10ms frame would cap scroll at ~55fps on a 120Hz display.
- *
- * `tick()` returning false means the last window closed. The loop stops and
- * `onTerminated` runs. `render()` uses that to exit the process.
- *
- * A throw from `tick()` must not stop the timer. On macOS that timer is the
- * AppKit pump; if it dies the window freezes while bun may still be alive.
+ * macOS pumps AppKit on display-link wakes, with a 100 ms fallback while occluded.
+ * Explicit `frameMs` uses timer polling instead, as Windows and Linux do.
+ * The pump never blocks JavaScript I/O and keeps running after a tick throws.
  */
 export function startFrameLoop(
-  renderer: Pick<GpuixRenderer, "requiresTick" | "tick">,
+  renderer: Parameters<typeof startNativeFrameLoop>[0],
   options: { frameMs?: number; onTerminated?: () => void } = {}
 ): FrameLoop {
   return startNativeFrameLoop(renderer, {

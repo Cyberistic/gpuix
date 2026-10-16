@@ -1097,11 +1097,20 @@ This is a remount, not React Refresh. Keeping hook state needs Bun to inject
 
 Native `.node` edits still need a rebuild. See [Developing the Rust side](#developing-the-rust-side).
 
-On **macOS**, `startFrameLoop` calls `renderer.tick()` at a fixed rate (~125fps by
-default). Each tick drains only ready AppKit events and Core Foundation sources,
-then returns without waiting for the next native wake. Bun timers, sockets, promises,
-and PTY callbacks can run between ticks. Pass `{ frameMs }` to change the rate, and
-call `.stop()` on the returned handle to end it.
+On **macOS**, `startFrameLoop` calls `renderer.tick()` when GPUI's display link
+queues a frame, instead of polling every 8 ms. Each tick drains only ready AppKit
+events and Core Foundation sources, then returns without blocking JavaScript I/O.
+Wakes coalesce while JavaScript is busy. A 100 ms fallback timer pumps events
+when no display wake arrives, such as when the window is hidden or occluded.
+Input waits for the next pump, not a separate input wake. This improves frame
+pacing; it does not eliminate idle CPU use while the display link is running.
+
+Pass `{ frameMs }` to `startFrameLoop` to use fixed-rate timer polling instead.
+Call `.stop()` on the returned handle to clear the wake callback and timer.
+For manual pumping, `renderer.setFrameWakeCallback(() => renderer.tick())`
+registers a weak callback after `init()`. It returns `true` on macOS and `false`
+on other platforms. Pass `null` to unregister; an already queued callback may
+still arrive. Manual callers must also pump when the display link is stopped.
 
 A **runtime throw does not freeze the window.** The frame loop catches errors from
 `tick()`, native event callbacks catch throws from React handlers, and `render()`

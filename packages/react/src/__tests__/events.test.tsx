@@ -26,6 +26,91 @@ const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describe("frame loop", () => {
   it.skipIf(process.platform !== "darwin")(
+    "drives the frame loop from real display-link wakes without blocking I/O",
+    () => {
+      const script = [
+        'import { readFile } from "node:fs/promises"',
+        'import { GpuixRenderer } from "@gpuix/native"',
+        'import { startFrameLoop } from "@gpuix/native/runtime"',
+        "const renderer = new GpuixRenderer(() => {})",
+        "renderer.init({ focus: false })",
+        "let wakes = 0",
+        "let finish",
+        "const frames = new Promise((resolve) => {",
+        "  finish = resolve",
+        "})",
+        "const loop = startFrameLoop({",
+        "  requiresTick: () => renderer.requiresTick(),",
+        "  tick: () => renderer.tick(),",
+        "  setFrameWakeCallback: (callback) => renderer.setFrameWakeCallback(callback && (() => {",
+        "    callback()",
+        "    if (++wakes === 3) finish()",
+        "  })),",
+        "})",
+        "await Promise.all([frames, readFile('package.json')])",
+        "loop.stop()",
+        "console.log(JSON.stringify({ wakes }))",
+        "process.exit(0)",
+      ].join("\n")
+      for (const command of ["bun", "node"]) {
+        const result = spawnSync(command, ["--input-type=module", "-e", script], {
+          encoding: "utf8",
+          timeout: 5_000,
+        })
+        expect(result.status, result.stderr || result.error?.message).toBe(0)
+        expect(JSON.parse(result.stdout.trim())).toEqual({ wakes: 3 })
+      }
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "uses the occluded-window fallback and keeps replacement loops registered",
+    () => {
+      const script = [
+        'import { GpuixRenderer } from "@gpuix/native"',
+        'import { startFrameLoop } from "@gpuix/native/runtime"',
+        "const renderer = new GpuixRenderer(() => {})",
+        "renderer.init({ focus: false, show: false })",
+        "let clears = 0",
+        "let ticks = 0",
+        "let nextTick",
+        "const host = {",
+        "  requiresTick: () => renderer.requiresTick(),",
+        "  tick: () => {",
+        "    const running = renderer.tick()",
+        "    ticks++",
+        "    nextTick?.()",
+        "    return running",
+        "  },",
+        "  setFrameWakeCallback: (callback) => {",
+        "    if (callback === null) clears++",
+        "    return renderer.setFrameWakeCallback(callback)",
+        "  },",
+        "}",
+        "const started = performance.now()",
+        "const first = startFrameLoop(host)",
+        "await new Promise((resolve) => { nextTick = resolve })",
+        "first.stop()",
+        "nextTick = undefined",
+        "const second = startFrameLoop(host)",
+        "first.stop()",
+        "await new Promise((resolve) => { nextTick = resolve })",
+        "second.stop()",
+        "console.log(JSON.stringify({ ticks, clears, elapsedMs: performance.now() - started }))",
+        "process.exit(0)",
+      ].join("\n")
+      const result = spawnSync("bun", ["-e", script], {
+        encoding: "utf8",
+        timeout: 5_000,
+      })
+      expect(result.status, result.stderr || result.error?.message).toBe(0)
+      const { ticks, clears, elapsedMs } = JSON.parse(result.stdout.trim())
+      expect({ ticks, clears }).toEqual({ ticks: 4, clears: 2 })
+      expect(elapsedMs).toBeGreaterThanOrEqual(180)
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
     "returns control to JavaScript while AppKit is idle",
     () => {
       const script = [

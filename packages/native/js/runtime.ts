@@ -11,6 +11,7 @@ import {
 import { createRendererState } from "./renderer-state.js"
 
 const DEFAULT_FRAME_MS = 8
+const FRAME_WAKE_FALLBACK_MS = 100
 
 export interface FrameLoop {
   stop(): void
@@ -47,7 +48,8 @@ export function createNativeRenderer(
 }
 
 export function startFrameLoop(
-  renderer: Pick<GpuixRenderer, "requiresTick" | "tick">,
+  renderer: Pick<GpuixRenderer, "requiresTick" | "tick"> &
+    Partial<Pick<GpuixRenderer, "setFrameWakeCallback">>,
   options: {
     frameMs?: number
     onTerminated?: () => void
@@ -55,16 +57,19 @@ export function startFrameLoop(
   } = {}
 ): FrameLoop {
   if (!renderer.requiresTick()) return { stop() {} }
-  const frameMs = options.frameMs ?? DEFAULT_FRAME_MS
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
   const stop = () => {
+    if (stopped) return
     stopped = true
+    if (frameWake) renderer.setFrameWakeCallback?.(null)
     if (timer !== undefined) clearTimeout(timer)
     timer = undefined
   }
   const loop = () => {
     if (stopped) return
+    if (timer !== undefined) clearTimeout(timer)
+    timer = undefined
     const started = performance.now()
     let running = true
     try {
@@ -77,8 +82,14 @@ export function startFrameLoop(
       options.onTerminated?.()
       return
     }
-    timer = setTimeout(loop, Math.max(0, frameMs - (performance.now() - started)))
+    if (stopped) return
+    const delay = frameWake
+      ? FRAME_WAKE_FALLBACK_MS
+      : Math.max(0, (options.frameMs ?? DEFAULT_FRAME_MS) - (performance.now() - started))
+    timer = setTimeout(loop, delay)
   }
+  const frameWake = options.frameMs === undefined &&
+    renderer.setFrameWakeCallback?.(loop) === true
   loop()
   return { stop }
 }
