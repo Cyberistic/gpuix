@@ -26,6 +26,40 @@ function Counter() {
 }
 
 describeNative("automation", () => {
+  it("returns unique descendants in tree order across overlapping locator roots", async () => {
+    const { render, renderer } = createTestRoot()
+    render(
+      <div testId="outer">
+        <div testId="inner">
+          <div testId="deep"><text>one target</text></div>
+          <text>second target</text>
+        </div>
+        <div><text>third target</text></div>
+        <text>outside</text>
+      </div>
+    )
+    const app = await connectTest(renderer)
+    const target = app.getByType("div").getByText("one target")
+    const id = renderer.findByText("one target")!.id
+    expect(await target.count()).toBe(1)
+    expect((await target.all()).map((node) => node.id)).toEqual([id])
+    expect((await target.element()).id).toBe(id)
+    expect((await target.waitFor()).id).toBe(id)
+
+    const targets = app.getByType("div").getByText("target")
+    expect((await targets.all()).map((node) => node.text)).toEqual([
+      "one target", "second target", "third target",
+    ])
+    await expect(targets.element()).rejects.toMatchObject({ code: "Ambiguous" })
+    const nested = app.getByType("div").getByType("div").getByText("target")
+    expect((await nested.all()).map((node) => node.text)).toEqual([
+      "one target", "second target", "third target",
+    ])
+    expect(await app.getByTestId("outer").getByTestId("outer").count()).toBe(0)
+    expect(await app.getByTestId("inner").getByText("outside").count()).toBe(0)
+    await app.close()
+  })
+
   it("clicks a testId locator and waits for text", async () => {
     const { render, renderer } = createTestRoot()
     render(<Counter />)

@@ -3765,6 +3765,17 @@ focused editor contents. `press('enter')` sends one key. `waitFor()` polls until
 exactly one match exists. `textContent()` returns the node's own text plus every
 descendant's, like DOM `textContent`.
 
+**Chained locators** search strict descendants, not the matching parents
+themselves. Overlapping parent roots return each element ID once, in tree
+order. `all()` returns those nodes and `count()` returns their number;
+`element()` rejects zero matches or more than one distinct match.
+
+```ts
+const target = app.getByType('div').getByText('one target')
+await target.count() // 1 when one text node is inside several nested divs
+await target.element() // that one node, not an ambiguous duplicate
+```
+
 ### Mouse, wheel, and drag
 
 | Call | What it does |

@@ -368,7 +368,10 @@ function collect(node: TreeNode | null, selector: Selector): TreeNode[] {
     ? collect(node, selector.parent)
     : [node]
   const found: TreeNode[] = []
+  const visited = new Set<number>()
   const walk = (current: TreeNode) => {
+    if (visited.has(current.id)) return
+    visited.add(current.id)
     if (matches(current, selector)) found.push(current)
     for (const child of current.children ?? []) walk(child)
   }
