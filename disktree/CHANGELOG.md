@@ -1,5 +1,15 @@
 # disktree
 
+## 0.2.2
+
+1. **Run disktree inside your terminal** with `GPUIX_TERMINAL=1`, in kitty or Ghostty, on macOS or Linux. Works over `ssh -t`:
+
+   ```bash
+   GPUIX_TERMINAL=1 npx disktree ~/src
+   ```
+
+   The top bar no longer reserves space for macOS traffic lights in a terminal, so the depth controls fit.
+
 ## 0.2.1
 
 1. **Windows support fixes** — the native Windows title bar stays, so the window can be dragged, minimized, maximized and closed. Source builds no longer need the Unix `chmod` tool.

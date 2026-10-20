@@ -14,6 +14,16 @@ npx disktree /          # the whole disk
 
 Runs on Node 20+ or Bun (`bunx disktree`). No Electron, no web view: GPUI paints it with Metal.
 
+## Run in a terminal
+
+```bash
+GPUIX_TERMINAL=1 npx disktree ~/src
+```
+
+Renders **inside the terminal** instead of opening a window. Needs kitty or Ghostty,
+on macOS or Linux. Works over `ssh -t`. Works for every GPUIX app, see
+[Run in a terminal](https://github.com/remorses/gpuix#run-in-a-terminal).
+
 ## What it shows
 
 - **Tiles** sized by disk usage (`st_blocks × 512`), coloured by kind: code,

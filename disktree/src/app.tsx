@@ -19,7 +19,7 @@
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { memo, useMemo, useState, useSyncExternalStore } from 'react'
-import { useWindowSize, type EventPayload } from '@gpuix/react'
+import { isTerminal, useWindowSize, type EventPayload } from '@gpuix/react'
 
 import {
   AGE_BUCKETS,
@@ -133,8 +133,8 @@ const PAD_RIGHT = 10
 const PAD_BOTTOM = 10
 const PANEL_WIDTH = 304
 const PANEL_GAP = 12
-// macOS paints the traffic lights over the app.
-const TRAFFIC_LIGHTS = process.platform === 'darwin' ? 84 : 14
+// macOS paints the traffic lights over the app. A terminal has none.
+const TRAFFIC_LIGHTS = 84
 
 function alpha(hex: string, value: number): string {
   const byte = Math.round(Math.max(0, Math.min(1, value)) * 255)
@@ -939,7 +939,8 @@ export function DisktreeApp({ store, width, height }: DisktreeAppProps) {
           height: TOP_BAR,
           flexShrink: 0,
           gap: 16,
-          paddingLeft: TRAFFIC_LIGHTS,
+          // isTerminal() is known only after the window opens, not at import.
+          paddingLeft: process.platform === 'darwin' && !isTerminal() ? TRAFFIC_LIGHTS : PAD_LEFT,
           paddingRight: PAD_RIGHT + 4,
         }}
       >
