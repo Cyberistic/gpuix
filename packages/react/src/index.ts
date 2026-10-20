@@ -175,4 +175,4 @@ export type {
   WindowSize as NativeWindowSize,
 } from "@gpuix/native"
 
-export { GpuixRenderer } from "@gpuix/native"
+export { GpuixRenderer, isTerminal } from "@gpuix/native"

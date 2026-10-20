@@ -118,9 +118,55 @@ pub(crate) fn to_element_id(id: f64) -> Result<u64> {
     raw_element_id(id).map_err(Error::from_reason)
 }
 
+/// The platform GPUI runs on when the Node thread pumps it. A terminal window
+/// needs no AppKit, but it uses the same embedded shape: `tick()` pumps it and
+/// the wake hook tells JS when to tick.
+#[cfg(target_os = "macos")]
+enum EmbeddedPlatform {
+    Mac(Rc<gpui_macos::MacPlatform>),
+    Terminal(Rc<gpui_terminal::TerminalPlatform>),
+}
+
+#[cfg(target_os = "macos")]
+impl EmbeddedPlatform {
+    fn platform(&self) -> Rc<dyn gpui::Platform> {
+        match self {
+            Self::Mac(platform) => platform.clone(),
+            Self::Terminal(platform) => platform.clone(),
+        }
+    }
+
+    fn pump_events(&self) -> bool {
+        match self {
+            Self::Mac(platform) => platform.pump_events(),
+            Self::Terminal(platform) => platform.pump_events(),
+        }
+    }
+
+    fn set_wake_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        match self {
+            Self::Mac(_) => gpui_macos::set_frame_wake_hook(hook),
+            Self::Terminal(platform) => platform.set_wake_hook(hook),
+        }
+    }
+}
+
+/// `WindowOptions.terminal`, else `GPUIX_TERMINAL=1`.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd"
+))]
+fn terminal_requested(options: &WindowOptions) -> bool {
+    options
+        .terminal
+        .unwrap_or_else(|| std::env::var("GPUIX_TERMINAL").is_ok_and(|value| value == "1"))
+}
+
 thread_local! {
     #[cfg(target_os = "macos")]
-    static MAC_PLATFORM: RefCell<Option<Rc<gpui_macos::MacPlatform>>> = const { RefCell::new(None) };
+    static EMBEDDED_PLATFORM: RefCell<Option<EmbeddedPlatform>> = const { RefCell::new(None) };
     #[cfg(target_os = "macos")]
     static GPUI_APP: RefCell<Option<gpui::ApplicationHandle>> = const { RefCell::new(None) };
     #[cfg(target_os = "macos")]
@@ -898,6 +944,19 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "unknown panic".to_string())
 }
 
+/// Set by `GpuixRenderer::init` when the window is the terminal. Process-wide:
+/// a terminal is one surface, so at most one renderer can own it.
+static TERMINAL_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True when the app renders inside a terminal instead of a native window.
+/// There is no titlebar then, so apps should not reserve traffic-light space.
+/// False until `init()` ran, so read it while rendering, not at module scope.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[napi]
+pub fn is_terminal() -> bool {
+    TERMINAL_MODE.load(std::sync::atomic::Ordering::Acquire)
+}
+
 /// The main GPUI renderer exposed to Node.js.
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[napi]
@@ -1159,7 +1218,7 @@ impl GpuixRenderer {
                 return Err(Error::from_reason("Renderer is already initialized"));
             }
         }
-        if MAC_PLATFORM.with(|platform| platform.borrow().is_some()) {
+        if EMBEDDED_PLATFORM.with(|platform| platform.borrow().is_some()) {
             return Err(Error::from_reason(
                 "A GPUI application already exists on this thread",
             ));
@@ -1174,7 +1233,15 @@ impl GpuixRenderer {
         let activate = options.focus.unwrap_or(true);
         let window_options = options.clone();
 
-        let platform = Rc::new(gpui_macos::MacPlatform::new_embedded());
+        let terminal = terminal_requested(&options);
+        let platform = if terminal {
+            EmbeddedPlatform::Terminal(Rc::new(
+                gpui_terminal::TerminalPlatform::new_embedded()
+                    .map_err(|error| Error::from_reason(format!("{error:#}")))?,
+            ))
+        } else {
+            EmbeddedPlatform::Mac(Rc::new(gpui_macos::MacPlatform::new_embedded()))
+        };
 
         let tree = self.tree.clone();
         let callback = self.event_callback_for_view();
@@ -1186,14 +1253,19 @@ impl GpuixRenderer {
         let startup_error_for_app = startup_error.clone();
         // bun/node is not a .app. A Dock icon with no window cannot relaunch.
         // Last window close quits AppKit; tick() returns false and JS exits.
-        let app = gpui::Application::with_platform(platform.clone())
+        let app = gpui::Application::with_platform(platform.platform())
             .with_quit_mode(gpui::QuitMode::LastWindowClosed);
         let app_handle = app.run_embedded(move |cx: &mut gpui::App| {
             crate::custom_elements::input::init(cx);
             crate::custom_elements::img::init(cx);
             // After the other bindings: `set_menus` reads key equivalents out of
             // the keymap, so every binding must exist before it runs.
-            crate::app_menu::init(&app_name, cx);
+            // A terminal has no menu bar.
+            if terminal {
+                crate::custom_elements::input::init_terminal(cx);
+            } else {
+                crate::app_menu::init(&app_name, cx);
+            }
             let bounds = gpui::Bounds::centered(
                 None,
                 gpui::size(gpui::px(width as f32), gpui::px(height as f32)),
@@ -1234,15 +1306,15 @@ impl GpuixRenderer {
             Err(error) => {
                 app_handle.update(|cx| cx.quit());
                 if platform.pump_events() {
-                    MAC_PLATFORM.with(|stored| {
-                        *stored.borrow_mut() = Some(platform.clone());
+                    EMBEDDED_PLATFORM.with(|stored| {
+                        *stored.borrow_mut() = Some(platform);
                     });
                 }
                 return Err(error);
             }
         };
 
-        MAC_PLATFORM.with(|stored| {
+        EMBEDDED_PLATFORM.with(|stored| {
             *stored.borrow_mut() = Some(platform);
         });
         GPUI_APP.with(|a| {
@@ -1252,6 +1324,7 @@ impl GpuixRenderer {
             *w.borrow_mut() = Some(window_handle);
         });
 
+        TERMINAL_MODE.store(terminal, std::sync::atomic::Ordering::Release);
         *self.initialized.lock().unwrap() = true;
         self.event_callback.lock().unwrap().take();
         Ok(())
@@ -1309,6 +1382,13 @@ impl GpuixRenderer {
         let exit_startup_sender = startup_sender.clone();
         let ui_running = self.ui_running.clone();
         let ui_running_for_run = ui_running.clone();
+        let terminal = terminal_requested(&options);
+        #[cfg(target_os = "windows")]
+        if terminal {
+            return Err(Error::from_reason(
+                "Terminal rendering is not supported on Windows",
+            ));
+        }
 
         std::thread::Builder::new()
             .name("gpuix-ui".to_string())
@@ -1316,14 +1396,31 @@ impl GpuixRenderer {
                 #[cfg(target_os = "windows")]
                 Self::enable_per_monitor_dpi();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                    let application = if terminal {
+                        match gpui_terminal::application() {
+                            Ok(application) => application,
+                            Err(error) => {
+                                startup_sender.send(Err(format!("{error:#}"))).ok();
+                                return;
+                            }
+                        }
+                    } else {
+                        gpui_platform::application()
+                    };
+                    #[cfg(target_os = "windows")]
+                    let application = gpui_platform::application();
                     // Default is already LastWindowClosed on Windows/Linux.
                     // Set it anyway so a GPUI default change cannot leave bun
                     // running after the last window closes, as on macOS.
-                    gpui_platform::application()
+                    application
                         .with_quit_mode(gpui::QuitMode::LastWindowClosed)
                         .run(move |cx| {
                             crate::custom_elements::input::init(cx);
                             crate::custom_elements::img::init(cx);
+                            if terminal {
+                                crate::custom_elements::input::init_terminal(cx);
+                            }
                             let size = gpui::size(gpui::px(width as f32), gpui::px(height as f32));
                             // A layer-shell surface is positioned by the compositor from its
                             // anchor, so it opens at the origin; a normal window is centered.
@@ -1387,6 +1484,7 @@ impl GpuixRenderer {
             .map_err(Error::from_reason)?;
 
         *self.ui_commands.lock().unwrap() = Some(command_sender);
+        TERMINAL_MODE.store(terminal, std::sync::atomic::Ordering::Release);
         *self.initialized.lock().unwrap() = true;
         self.event_callback.lock().unwrap().take();
         Ok(())
@@ -1441,7 +1539,7 @@ impl GpuixRenderer {
 
         #[cfg(target_os = "macos")]
         {
-            let running = MAC_PLATFORM.with(|p| {
+            let running = EMBEDDED_PLATFORM.with(|p| {
                 p.borrow()
                     .as_ref()
                     .map(|platform| platform.pump_events())
@@ -1475,6 +1573,7 @@ impl GpuixRenderer {
         *self.initialized.lock().unwrap()
     }
 
+
     /// Wake JavaScript after the display link queues a frame. Returns true on macOS,
     /// false on other platforms. Call tick() in the callback; it never blocks.
     /// Wakes coalesce while JavaScript is busy and do not keep the process alive.
@@ -1485,8 +1584,15 @@ impl GpuixRenderer {
         {
             use std::sync::atomic::{AtomicBool, Ordering};
 
+            let set_wake_hook = |hook: Option<Arc<dyn Fn() + Send + Sync>>| {
+                EMBEDDED_PLATFORM.with(|platform| {
+                    if let Some(platform) = platform.borrow().as_ref() {
+                        platform.set_wake_hook(hook);
+                    }
+                })
+            };
             let Some(callback) = callback else {
-                gpui_macos::set_frame_wake_hook(None);
+                set_wake_hook(None);
                 return Ok(true);
             };
             if !self.is_initialized() {
@@ -1504,7 +1610,7 @@ impl GpuixRenderer {
                     handled.store(false, Ordering::Release);
                     Ok(())
                 })?;
-            gpui_macos::set_frame_wake_hook(Some(Arc::new(move || {
+            set_wake_hook(Some(Arc::new(move || {
                 if !pending.swap(true, Ordering::AcqRel)
                     && wake.call((), ThreadsafeFunctionCallMode::NonBlocking) != napi::Status::Ok
                 {
@@ -3522,7 +3628,13 @@ impl Drop for GpuixRenderer {
     fn drop(&mut self) {
         #[cfg(target_os = "macos")]
         if *self.initialized.lock().unwrap() {
-            gpui_macos::set_frame_wake_hook(None);
+            EMBEDDED_PLATFORM
+                .try_with(|platform| {
+                    if let Some(platform) = platform.borrow().as_ref() {
+                        platform.set_wake_hook(None);
+                    }
+                })
+                .ok();
         }
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         self.ui_commands.lock().unwrap().take();
@@ -7414,6 +7526,11 @@ pub struct WindowOptions {
     /// Open the window as a Wayland `wlr-layer-shell` surface instead of a
     /// normal window. Linux/Wayland only; ignored elsewhere.
     pub layer_shell: Option<LayerShellOptions>,
+    /// Render inside the current terminal with the kitty graphics protocol
+    /// instead of opening a native window. The window fills the terminal, so
+    /// size and window chrome options are ignored. macOS and Linux. Defaults
+    /// to the `GPUIX_TERMINAL=1` environment variable.
+    pub terminal: Option<bool>,
 }
 
 impl Default for WindowOptions {
@@ -7436,6 +7553,7 @@ impl Default for WindowOptions {
             show: Some(true),
             app_id: None,
             layer_shell: None,
+            terminal: None,
         }
     }
 }

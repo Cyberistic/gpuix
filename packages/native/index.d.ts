@@ -668,6 +668,13 @@ export interface HighlightRect {
 }
 
 /**
+ * True when the app renders inside a terminal instead of a native window.
+ * There is no titlebar then, so apps should not reserve traffic-light space.
+ * False until `init()` ran, so read it while rendering, not at module scope.
+ */
+export declare function isTerminal(): boolean
+
+/**
  * Wayland `wlr-layer-shell` surface options. Linux/Wayland only; ignored on
  * every other platform. When present on `WindowOptions`, the window is opened
  * as a compositor-anchored surface (a bar, dock, notification overlay or
@@ -782,6 +789,13 @@ export interface WindowOptions {
    * normal window. Linux/Wayland only; ignored elsewhere.
    */
   layerShell?: LayerShellOptions
+  /**
+   * Render inside the current terminal with the kitty graphics protocol
+   * instead of opening a native window. The window fills the terminal, so
+   * size and window chrome options are ignored. macOS and Linux. Defaults
+   * to the `GPUIX_TERMINAL=1` environment variable.
+   */
+  terminal?: boolean
 }
 
 export interface WindowSize {

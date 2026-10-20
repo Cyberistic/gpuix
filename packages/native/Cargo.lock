@@ -2503,6 +2503,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_terminal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "futures",
+ "gpui",
+ "gpui_macos",
+ "gpui_wgpu",
+ "libc",
+ "log",
+ "metal",
+ "objc",
+ "parking_lot",
+ "raw-window-handle",
+ "smol",
+ "uuid",
+]
+
+[[package]]
 name = "gpui_util"
 version = "0.1.0"
 dependencies = [
@@ -2601,6 +2621,7 @@ dependencies = [
  "gpui",
  "gpui_macos",
  "gpui_platform",
+ "gpui_terminal",
  "http_client",
  "js-sys",
  "log",

@@ -33,6 +33,15 @@ GPUI call makes it safe.
 Prefer the smallest translation. Fewer moving parts is more important than matching any
 other framework's behaviour.
 
+## No hooks unless the value is reactive
+
+Do not add a hook to `@gpuix/react` or a primitive to `@gpuix/solid` unless the
+value changes over time and the component must re-render when it does
+(`useWindowSize`, `useWindowInsets`). A value that is fixed once the window
+opens is a plain exported function, like `isTerminal()`. Apps and examples
+follow the same rule: no `useState`, `useMemo`, or custom hook for a value that
+a plain call or constant gives.
+
 ## Built-in components follow Base UI
 
 Headless controls in `@gpuix/react` and `@gpuix/solid` (`select`, `combobox`,
@@ -484,6 +493,16 @@ replaced it with a `<textarea>` because a single-line input strips newlines from
 an assigned value and desynchronises the mirror from the document. Our
 tag-qualified selector was never updated, so after that submodule bump every
 browser keystroke failed. A tag-qualified selector will do it again.
+
+## Terminal mode swaps the platform, not the renderer
+
+`terminal: true` (or `GPUIX_TERMINAL=1`) runs the same `GpuixView` on
+`gpui_terminal`, a GPUI platform in the Zed fork that paints with the kitty
+graphics protocol. On macOS it replaces `MacPlatform` inside the embedded path
+(`EmbeddedPlatform` in `renderer.rs`), so `tick()` and the frame wake hook work
+unchanged. On Linux it replaces `gpui_platform::application()` on the
+`gpuix-ui` thread. Do not add terminal branches to individual napi methods.
+Details and traps: [docs/terminal-renderer.md](./docs/terminal-renderer.md).
 
 ## Virtualized React children re-enter through `cx.processor`
 

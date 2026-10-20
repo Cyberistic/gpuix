@@ -5,7 +5,7 @@
  */
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { applyMacCpuThrottleFromEnv, render } from '@gpuix/react'
+import { applyMacCpuThrottleFromEnv, isTerminal, render } from '@gpuix/react'
 
 import iconSidebar from './assets/icons/panel-left.svg' with { type: 'text' }
 import iconArrowLeft from './assets/icons/arrow-left.svg' with { type: 'text' }
@@ -43,8 +43,9 @@ const FONT = typeof window === 'undefined' ? 'Helvetica' : 'IBM Plex Sans'
 const SIDEBAR_WIDTH = 214
 const LIST_WIDTH = 328
 const TITLEBAR_HEIGHT = 48
-const TRAFFIC_LIGHT_CLEARANCE =
-  typeof process !== 'undefined' && process.platform === 'darwin' ? 86 : 12
+const HAS_TRAFFIC_LIGHTS = typeof process !== 'undefined' && process.platform === 'darwin'
+const TRAFFIC_LIGHT_CLEARANCE = 86
+const TITLEBAR_EDGE_GAP = 12
 
 const SVG = {
   clock: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>`,
@@ -69,6 +70,12 @@ const SVG = {
   snooze: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>`,
   framer: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#000" d="M4 0h16v8h-8zm0 8h8l8 8H4zm8 8h8v8z"/></svg>`,
 } as const
+
+/** Room for the macOS traffic lights. A terminal window has no titlebar. */
+function TrafficLightSpacer({ inset = 0 }: { inset?: number }) {
+  const width = HAS_TRAFFIC_LIGHTS && !isTerminal() ? TRAFFIC_LIGHT_CLEARANCE : TITLEBAR_EDGE_GAP
+  return <div style={{ width: Math.max(0, width - inset), height: '100%', flexShrink: 0 }} />
+}
 
 const ICONS = {
   sidebar: iconSidebar,
@@ -918,7 +925,7 @@ export function MailApp() {
             paddingRight: 12,
           }}
         >
-          <div style={{ width: TRAFFIC_LIGHT_CLEARANCE, height: '100%', flexShrink: 0 }} />
+          <TrafficLightSpacer />
           <Pill>
             <IconButton icon="sidebar" size={15} testId="sidebar-toggle" />
           </Pill>

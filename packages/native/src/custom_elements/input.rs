@@ -180,6 +180,15 @@ pub fn init(cx: &mut App) {
     cx.bind_keys(bindings);
 }
 
+/// A terminal app quits on ctrl-c. Unbinding the text field's ctrl-c copy lets
+/// the keystroke reach the terminal platform while a field has focus.
+pub fn init_terminal(cx: &mut App) {
+    cx.bind_keys(
+        [INPUT_KEY_CONTEXT, TEXTAREA_KEY_CONTEXT, TEXTAREA_SUBMIT_KEY_CONTEXT]
+            .map(|context| KeyBinding::new("ctrl-c", gpui::NoAction, Some(context))),
+    );
+}
+
 fn text_editor_bindings(
     context: &'static str,
     multiline: bool,

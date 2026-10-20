@@ -745,6 +745,19 @@ terminal.
 | `appName` | string | Name inside the macOS `Hide X` and `Quit X` items. Defaults to `title` |
 | `focus` | boolean, default `true` | `false` opens the window behind the active app, like `open -g` |
 | `show` | boolean, default `true` | `false` opens the window hidden. Call `activateWindow()` to reveal it |
+| `terminal` | boolean, default `GPUIX_TERMINAL=1` | Render inside the current terminal instead of a native window. See [Run in a terminal](#run-in-a-terminal) |
+
+On macOS, `"blurred"` blurs the desktop behind the window but does not add a
+light tint. Paint a translucent light background when building a light UI:
+
+```tsx
+render(<div style={{ backgroundColor: '#F4F2FAD9', width: '100%', height: '100%' }} />, {
+  windowBackground: 'blurred',
+})
+```
+
+The final colour depends on what is behind the window. A tint that looks light
+over wallpaper can look gray over a dark app. GPUIX cannot set the blur radius.
 
 Call it again after a save and it remounts the tree on the same window.
 
@@ -818,6 +831,63 @@ function Reveal() {
 ```
 
 Outside React, call it on the renderer that `createRenderer()` returned.
+
+### Run in a terminal
+
+`terminal: true` renders the app **inside the terminal** it was started from,
+with the kitty graphics protocol. No native window opens. The same React tree,
+layout, text and GPU paint run; only the surface changes.
+
+```tsx
+render(<App />, { terminal: true })
+```
+
+```bash
+GPUIX_TERMINAL=1 bun app.tsx   # same, without changing the code
+```
+
+```
+GPUI scene ──► offscreen Metal / wgpu render ──► RGBA in POSIX shared memory
+                                                   │ ~100 byte escape code
+                                                   ▼
+                          terminal (kitty, Ghostty) ──► mouse, keys, paste, resize ──► React
+```
+
+- **Terminals**: kitty and Ghostty. WezTerm is untested and likely cannot read
+  shared memory frames on macOS
+- **Platforms**: macOS and Linux. Windows throws
+- **Size**: the window fills the terminal and follows its resizes. `width`,
+  `height` and window chrome options are ignored
+- **Input**: hover, clicks, drag, scroll, keys with key-up, paste and focus
+  come from SGR pixel mouse reports and the kitty keyboard protocol
+- **Quit**: ctrl-c, even when a text field has focus. The terminal is restored
+  on quit, SIGTERM, SIGINT, a native panic and `process.exit()`
+- **Logs**: stdout and stderr are held while the app runs and printed after it
+  exits. Printing into the screen would scroll the frame away. On Node, a
+  stream that already printed before `render()` keeps writing to the terminal;
+  run `node app.mjs > app.log 2>&1` if you log before mounting. Bun has no such
+  limit
+- **Clipboard**: copy writes the system clipboard with OSC 52. Paste with the
+  terminal's own paste shortcut
+
+**Local only.** Frames go through shared memory, so the app and the terminal
+must run on the same machine. SSH is not supported yet.
+
+**No titlebar.** A terminal has no macOS traffic lights, so space reserved for
+them becomes an empty gap. `isTerminal()` tells the app, and it is a plain
+function, not a hook: the answer never changes after the window opens.
+
+```tsx
+import { isTerminal } from '@gpuix/react' // or '@gpuix/solid'
+
+function TrafficLightSpacer() {
+  const macWindow = process.platform === 'darwin' && !isTerminal()
+  return <div style={{ width: macWindow ? 86 : 8, height: '100%', flexShrink: 0 }} />
+}
+```
+
+Call it while rendering, not at module scope: it is `false` until `render()`
+opened the window.
 
 ### Window controls
 

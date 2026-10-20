@@ -88,7 +88,7 @@ export {
   DismissableLayer,
 } from "./components/floating.js"
 export * from "@gpuix/native/host"
-export { GpuixRenderer } from "@gpuix/native"
+export { GpuixRenderer, isTerminal } from "@gpuix/native"
 export type { EventModifiers, EventPayload, WindowOptions } from "@gpuix/native"
 export type { JSX, SolidHostProps } from "./jsx-runtime.js"
 export type { MotionDivProps } from "./components/motion.js"

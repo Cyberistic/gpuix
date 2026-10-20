@@ -20,6 +20,7 @@ import {
   DialogPopup,
   DialogPortal,
   DialogTitle,
+  isTerminal,
   motion,
   render,
   Select,
@@ -87,10 +88,17 @@ const C = {
 }
 
 const SIDEBAR_WIDTH = 252
-const TRAFFIC_LIGHT_CLEARANCE =
-  typeof process !== 'undefined' && process.platform === 'darwin' ? 86 : 8
+const HAS_TRAFFIC_LIGHTS = typeof process !== 'undefined' && process.platform === 'darwin'
+const TRAFFIC_LIGHT_CLEARANCE = 86
+const TITLEBAR_EDGE_GAP = 8
 const CONTENT_MAX_WIDTH = 720
 const TITLEBAR_HEIGHT = 48
+
+/** Room for the macOS traffic lights. A terminal window has no titlebar. */
+function TrafficLightSpacer({ inset = 0 }: { inset?: number }) {
+  const width = HAS_TRAFFIC_LIGHTS && !isTerminal() ? TRAFFIC_LIGHT_CLEARANCE : TITLEBAR_EDGE_GAP
+  return <div style={{ width: Math.max(0, width - inset), height: '100%', flexShrink: 0 }} />
+}
 
 const FONT_SANS = typeof window === 'undefined' ? 'Helvetica' : 'IBM Plex Sans'
 const FONT_MONO = typeof window === 'undefined' ? 'Menlo' : 'Lilex'
@@ -592,7 +600,7 @@ function Sidebar({
           flexShrink: 0,
         }}
       >
-        <div style={{ width: TRAFFIC_LIGHT_CLEARANCE, height: '100%', flexShrink: 0 }} />
+        <TrafficLightSpacer />
         <IconButton
           icon="sidebar"
           size={16}
@@ -1119,7 +1127,7 @@ function Header({
     >
       {collapsed && (
         <>
-          <div style={{ width: TRAFFIC_LIGHT_CLEARANCE - 8, height: '100%', flexShrink: 0 }} />
+          <TrafficLightSpacer inset={8} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <IconButton icon="sidebar" testId="sidebar-expand" onClick={onExpand} />
             <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2 }}>
