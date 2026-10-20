@@ -1128,6 +1128,11 @@ window, renderer, input, scroll, clipboard, keyboard, and IME implementations.
 The embedded macOS run-loop extension comes from the pinned GPUIX fork. CI runs
 the full React and example test suites through DirectX on Windows.
 
+On **Linux**, the native addon enables both Wayland and X11. GPUI selects
+Wayland when `WAYLAND_DISPLAY` is non-empty, otherwise X11 when `DISPLAY` is
+non-empty. To use X11 under XWayland, start the app with
+`env -u WAYLAND_DISPLAY bun app.tsx`. `ZED_HEADLESS` must be unset for a window.
+
 > [!IMPORTANT]
 > On macOS, never drive `tick()` from a `setImmediate` loop. That spins at tens of thousands of
 > ticks per second and burns **73% CPU on a completely idle app**, versus **1%** when
