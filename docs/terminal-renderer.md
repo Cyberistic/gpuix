@@ -48,6 +48,38 @@ GPUI Scene ──► Metal or wgpu offscreen RGBA texture
 - **Demand driven**: frames only render when GPUI invalidates, capped at 60 Hz
 - **Cost**: about 4 ms per 1600x960 frame on M-series (render, wait, readback, shm)
 
+## Over SSH: inline frames
+
+The terminal on another machine cannot open our shm. At window open the presenter asks,
+the same way kitty's `icat` and yazi do:
+
+```
+ESC_G a=q,i=<probe>,s=1,v=1,f=24,t=s,S=3;<b64 name of a 3 byte shm object> ESC\  CSI c
+
+ESC_G i=<probe>;OK            → shared memory (same machine)
+ESC_G i=<probe>;ENOENT:...    → inline
+CSI ?62;...c with no OK       → inline (replies come in order)
+nothing in 2 s                → inline
+```
+
+Inline frames are the full RGBA frame, zlib level 1, base64, in 4096 byte chunks:
+
+```
+CSI ?2026h CSI H  ESC_G a=T,i=1,p=1,f=32,o=z,t=d,s=W,v=H,C=1,q=2,m=1;<chunk> ESC\
+                  ESC_G m=1,q=2;<chunk> ESC\ ... ESC_G m=0,q=2;<chunk> ESC\  CSI ?2026l
+ESC_G a=q,i=<fence n>,s=1,v=1,f=24,t=d;AAAA ESC\     ← terminal answers OK when it got here
+```
+
+- **Fence gate**: no new frame renders while 2 fences wait for their reply. Without it
+  SSH and TCP buffers hold seconds of stale frames and input lags behind. A fence with no
+  reply for 2 s stops counting
+- **Size**: about 120 KB per 1600x960 frame of `terminal_hello`, about 470 KB for a dense
+  2360x1640 chat. 20 Mbit/s gives about 20 and 5 fps for full-frame updates
+- **The write blocks the main thread** while the link drains. Fine for SSH, a writer
+  thread would keep input responsive on very slow links
+- **Not done**: dirty tiles (hover and typing would be 5 to 10x smaller), `f=24`, tmux.
+  Under tmux replies are not routed back to the pane, so the probe falls back to inline
+
 ## Input
 
 | Terminal feature | Enable | Becomes |
@@ -114,7 +146,8 @@ renderer.init ─► init_macos                 renderer.init ─► init_thread
 ## Testing without a terminal window
 
 `tmp/fake-kitty.py` (gitignored) runs a binary in a pty with a fake pixel size, reads every
-shm frame into a PNG and injects mouse, keys, resize and ctrl-c.
+shm or inline frame into a PNG, answers `a=q` and `CSI c`, and injects mouse, keys, resize
+and ctrl-c. `REMOTE=1` makes it refuse shm, like a terminal on another machine.
 
 ```bash
 uv run --no-project --python 3.13 tmp/fake-kitty.py tmp/out \
@@ -124,6 +157,10 @@ uv run --no-project --python 3.13 tmp/fake-kitty.py tmp/out \
 docker exec gpui-term-linux python3 /harness/fake-kitty.py /harness/out \
   /target/debug/examples/terminal_hello
 
+# Real remote: the app in Docker, the fake terminal on the host. Different /dev/shm,
+# so the probe fails for real. docker exec forwards no pixel size (8x16 cell fallback)
+uv run --no-project --python 3.13 tmp/fake-kitty.py tmp/out \
+  docker exec -it -e XDG_RUNTIME_DIR=/tmp gpui-term-linux /target/debug/examples/terminal_hello
 ```
 
 ## Research notes
@@ -132,7 +169,8 @@ docker exec gpui-term-linux python3 /harness/fake-kitty.py /harness/out \
 |---|---|
 | [terminal-browser](https://github.com/zenbu-labs/terminal-browser) `pixel-core` | shm then file then inline transport, dirty patches with `a=f`, 2026 sync, 1016 probe |
 | [opentui](https://github.com/anomalyco/opentui) | kitty keyboard flags, SGR bit layout, drag tracking, ESC timeout |
-| [kitty spec](https://sw.kovidgoyal.net/kitty/graphics-protocol/) | `t=s` lifecycle, id replacement, `q=2` |
+| [kitty spec](https://sw.kovidgoyal.net/kitty/graphics-protocol/) | `t=s` lifecycle, id replacement, `q=2`, chunked `t=d`, `a=q` + DA1 support query |
+| [kitty icat](https://github.com/kovidgoyal/kitty/blob/master/kittens/icat/detect.go), [yazi](https://github.com/sxyazi/yazi/blob/main/yazi-tty/src/sequence/query.rs), [ratatui-image](https://github.com/ratatui/ratatui-image/blob/master/src/picker/cap_parser.rs) | one pixel `a=q,t=s` probe ended by `CSI c` |
 | [mpv vo_kitty](https://github.com/mpv-player/mpv/blob/master/video/out/vo_kitty.c), [awrit](https://github.com/chase/awrit) | per-frame shm, writer thread |
 
 No Rust crate covers both kitty graphics with shm and an input parser that handles APC
@@ -148,7 +186,6 @@ The encoder and parser here are hand written, about 700 lines.
 ## Not done
 
 - **Dirty rectangles**: `a=f,r=1,x,y,s,v` would cut terminal upload cost. Ghostty 1.3 lacks it
-- **Remote use**: SSH needs a `t=d` + `o=z` fallback
 - **Copy shortcut**: Ghostty takes cmd-c for itself and ctrl-c quits, so a text field has
   no copy key in terminal mode
 - **Linux GPUIX run**: `gpuix-native` type-checks on Linux, but no app ran there yet

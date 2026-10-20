@@ -12,8 +12,10 @@ change.
 render(<App />, { terminal: true })
 ```
 
-Frames are rendered offscreen and shown with the kitty graphics protocol through
-shared memory, so it works in kitty and Ghostty on the same machine. Mouse,
+Frames are rendered offscreen and shown with the kitty graphics protocol, in kitty
+and Ghostty. On the same machine they go through shared memory. Over SSH, or when
+the terminal cannot open the shared memory, each frame is sent inline, zlib
+compressed; at most two frames wait in the link, so input stays responsive. Mouse,
 hover, scroll, keyboard with key-up, paste, focus and resize all reach the app.
 ctrl-c quits, also from a focused text field. The terminal is restored on quit,
 SIGTERM, SIGINT, a native panic and `process.exit()`. Output printed while the

@@ -849,6 +849,7 @@ GPUIX_TERMINAL=1 bun app.tsx   # same, without changing the code
 ```
 GPUI scene ──► offscreen Metal / wgpu render ──► RGBA in POSIX shared memory
                                                    │ ~100 byte escape code
+                                                   │ (over SSH: the frame itself, zlib + base64)
                                                    ▼
                           terminal (kitty, Ghostty) ──► mouse, keys, paste, resize ──► React
 ```
@@ -870,8 +871,14 @@ GPUI scene ──► offscreen Metal / wgpu render ──► RGBA in POSIX share
 - **Clipboard**: copy writes the system clipboard with OSC 52. Paste with the
   terminal's own paste shortcut
 
-**Local only.** Frames go through shared memory, so the app and the terminal
-must run on the same machine. SSH is not supported yet.
+**SSH works.** On the same machine frames go through shared memory. When the
+terminal cannot open it (SSH, a container), the app finds out at startup and
+sends each frame inline, compressed. That is about 120 KB per 1600x960 frame,
+so expect fewer frames per second on a slow link. tmux is not supported.
+
+```bash
+ssh -t my-server 'GPUIX_TERMINAL=1 bun app.tsx'   # -t: the app needs a tty
+```
 
 **No titlebar.** A terminal has no macOS traffic lights, so space reserved for
 them becomes an empty gap. `isTerminal()` tells the app, and it is a plain
