@@ -31,6 +31,7 @@ gpui = { path = "../../zed/crates/gpui", default-features = false, features = ["
 thiserror = "2"
 pulldown-cmark = { version = "0.12", default-features = false }
 unicode-segmentation = "1"
+unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
 web-time = "1"
 # Checks fonts handed to `registerFont`; GPUI's text system aborts on malformed ones.
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }

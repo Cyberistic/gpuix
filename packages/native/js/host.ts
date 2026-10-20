@@ -370,7 +370,7 @@ export interface HighlightSpec {
    */
   query?: string
   caseSensitive?: boolean
-  /** Only match when neither neighbour is alphanumeric or `_`. */
+  /** Only match when neither neighbour is Unicode Alphabetic, a number, a mark, or `_`. */
   wholeWord?: boolean
   /**
    * Explicit `[start, end)` pairs in UTF-16 code units, the units `indexOf` and

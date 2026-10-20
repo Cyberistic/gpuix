@@ -467,6 +467,36 @@ describe("useTextSearch", () => {
 })
 
 describe("findRanges", () => {
+  it("matches Unicode ranges identically in JS, retained text, and native code", () => {
+    const { render, renderer } = createTestRoot()
+    const cases: Array<{ text: string; query: string; wholeWord?: boolean; expected: number[][] }> = [
+      { text: "ΟΣ", query: "ΟΣ", expected: [[0, 2]] },
+      { text: "ΟΣ ΟΣ", query: "ος", expected: [[0, 2], [3, 5]] },
+      { text: "ΟΣΑ", query: "οσα", expected: [[0, 3]] },
+      { text: "İ", query: "i", expected: [[0, 1]] },
+      { text: "xİx", query: "xi", expected: [[0, 2]] },
+      { text: "İ", query: "\u0307", expected: [[0, 1]] },
+      { text: "İİİ", query: "\u0307i", expected: [[0, 2]] },
+      { text: "\u{10400}İ fox", query: "i", expected: [[2, 3]] },
+      { text: "cafe\u0301", query: "cafe", wholeWord: true, expected: [] },
+      { text: "cafe\u093e", query: "cafe", wholeWord: true, expected: [] },
+      { text: "cafe\u20dd", query: "cafe", wholeWord: true, expected: [] },
+      { text: "cafe\u0301", query: "cafe\u0301", wholeWord: true, expected: [[0, 5]] },
+    ]
+    for (const { text, query, wholeWord, expected } of cases) {
+      expect(findRanges({ text, query, wholeWord })).toEqual(expected)
+      for (const kind of ["text", "code"] as const) {
+        render(
+          <div highlight={{ query, wholeWord }}>
+            {kind === "text" ? <text>{text}</text> : <code code={text} />}
+          </div>
+        )
+        const ranges = renderer.getPaintedHighlights().map(({ start, end }) => [start, end])
+        expect(ranges, JSON.stringify({ kind, text, query, wholeWord })).toEqual(expected)
+      }
+    }
+  })
+
   it("mirrors the native matcher for the common cases", () => {
     expect(findRanges({ text: "Fox fox FOX", query: "fox" })).toEqual([
       [0, 3],

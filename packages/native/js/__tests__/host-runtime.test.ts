@@ -191,6 +191,36 @@ describe("shared host runtime", () => {
       .toEqual([[0, 3], [4, 7]])
   })
 
+  it("maps contextual lowercase and expanded characters to complete original ranges", () => {
+    const cases: Array<{ text: string; query: string; expected: Array<[number, number]> }> = [
+      { text: "ΟΣ", query: "ΟΣ", expected: [[0, 2]] },
+      { text: "ΟΣ ΟΣ", query: "ος", expected: [[0, 2], [3, 5]] },
+      { text: "ΟΣΑ", query: "οσα", expected: [[0, 3]] },
+      { text: "İ", query: "i", expected: [[0, 1]] },
+      { text: "xİx", query: "xi", expected: [[0, 2]] },
+      { text: "İ", query: "\u0307", expected: [[0, 1]] },
+      { text: "İ", query: "i\u0307", expected: [[0, 1]] },
+      { text: "İİİ", query: "\u0307i", expected: [[0, 2]] },
+      { text: "\u{10400}İ fox", query: "i", expected: [[2, 3]] },
+      { text: "\u{10400}İ fox", query: "\u{10428}", expected: [[0, 2]] },
+      { text: "ﬀ", query: "ff", expected: [] },
+      { text: "İstanbul", query: "istanbul", expected: [] },
+    ]
+    for (const { text, query, expected } of cases) {
+      expect(findRanges({ text, query }), JSON.stringify({ text, query })).toEqual(expected)
+    }
+    expect(findRanges({ text: "İ", query: "i", caseSensitive: true })).toEqual([])
+  })
+
+  it("keeps all Unicode mark categories inside a whole word", () => {
+    for (const mark of ["\u0301", "\u093e", "\u20dd"]) {
+      expect(findRanges({ text: `cafe${mark}`, query: "cafe", wholeWord: true })).toEqual([])
+      expect(findRanges({ text: `${mark}cafe`, query: "cafe", wholeWord: true })).toEqual([])
+      expect(findRanges({ text: `cafe${mark}`, query: `cafe${mark}`, wholeWord: true })).toEqual([[0, 5]])
+    }
+    expect(findRanges({ text: "cafe\u0301", query: "cafe", wholeWord: true, caseSensitive: true })).toEqual([])
+  })
+
   it("observes selected text and removes its callback", () => {
     const renderer = new RecordingRenderer() as RecordingRenderer & {
       getSelectedText(): string | null

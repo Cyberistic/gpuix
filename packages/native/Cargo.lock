@@ -2647,6 +2647,7 @@ dependencies = [
  "time",
  "ttf-parser",
  "two-face",
+ "unicode-properties",
  "unicode-segmentation",
  "url",
  "wasm-bindgen",

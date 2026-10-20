@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> Remove this line to confirm you've reviewed this PR before submitting.
+
 # GPUIX
 
 **React and Solid** for [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), Zed's GPU UI framework.
@@ -2762,7 +2765,7 @@ for those.
 |---|---|
 | `query` | substring to match, case-insensitive by default |
 | `caseSensitive` | exact case only |
-| `wholeWord` | neither neighbour may be alphanumeric or `_` |
+| `wholeWord` | neither neighbour may be Unicode Alphabetic, a number, a mark, or `_` |
 | `ranges` | explicit `[start, end)` UTF-16 pairs |
 | `color` / `activeColor` | any CSS colour; defaults come from the theme |
 | `activeIndex` | which match gets `activeColor`, for a find cursor |
@@ -2776,8 +2779,22 @@ persistent mention tint. Later entries draw on top.
 
 Matches are **non-overlapping** and leftmost-first. Case-insensitive matching
 uses Unicode **lowercasing**, not full case folding, so `ﬀ` does not match `ff`.
-A word boundary is any code point that is not Unicode Alphabetic, a digit,
-or `_`.
+Text and query both lowercase as whole strings, including Greek final sigma.
+Matches inside a lowercase expansion cover the complete original character.
+Returned ranges stay non-overlapping in the original text.
+
+```ts
+findRanges({ text: 'ΟΣ', query: 'ΟΣ' }) // [[0, 2]]
+findRanges({ text: 'İ', query: 'i' })   // [[0, 1]], covers the original İ
+```
+
+A **word boundary** is any code point that is not Unicode Alphabetic, a number,
+a combining mark, or `_`. This does not normalize accents or remove them:
+
+```ts
+findRanges({ text: 'cafe\u0301', query: 'cafe', wholeWord: true }) // []
+findRanges({ text: 'cafe\u0301', query: 'cafe\u0301', wholeWord: true }) // [[0, 5]]
+```
 
 A match never crosses a line, exactly like browser find. It **does** cross the
 several host nodes React creates for one interpolated line, which matters more

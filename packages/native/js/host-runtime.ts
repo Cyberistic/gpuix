@@ -132,7 +132,7 @@ export interface FindRangesOptions {
   wholeWord?: boolean
 }
 
-const WORD_CHAR = /[\p{Alphabetic}\p{N}_]/u
+const WORD_CHAR = /[\p{Alphabetic}\p{N}\p{M}_]/u
 
 function wordCharBefore(text: string, end: number): boolean {
   if (end <= 0) return false
@@ -147,16 +147,15 @@ function wordCharAt(text: string, start: number): boolean {
 }
 
 function fold(text: string): { folded: string; map: number[] } {
-  let folded = ""
+  const folded = text.toLowerCase()
   const map: number[] = []
+  // Contextual lowercase changes sigma's value, not its length, so scalar lengths map both.
   for (let index = 0; index < text.length;) {
     const char = String.fromCodePoint(text.codePointAt(index) ?? 0)
     const lower = char.toLowerCase()
     for (let unit = 0; unit < lower.length; unit += 1) map.push(index)
-    folded += lower
     index += char.length
   }
-  map.push(text.length)
   return { folded, map }
 }
 
@@ -172,8 +171,11 @@ export function findRanges(options: FindRangesOptions): Array<[number, number]> 
     if (at < 0) break
     from = at + needle.length
     const start = map ? map[at]! : at
-    const end = map ? map[from]! : from
+    // The final folded unit can be inside an expansion; include its complete source character.
+    const last = map ? map[from - 1]! : from - 1
+    const end = map ? last + (text.codePointAt(last)! > 0xffff ? 2 : 1) : from
     if (start >= end) continue
+    if (start < (ranges.at(-1)?.[1] ?? 0)) continue
     if (wholeWord && (wordCharBefore(text, start) || wordCharAt(text, end))) continue
     ranges.push([start, end])
   }

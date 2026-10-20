@@ -16,6 +16,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::Hsla;
+use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use crate::retained_tree::RetainedTree;
 
@@ -218,7 +219,7 @@ impl std::fmt::Debug for Needle {
 //
 // This is Unicode default lowercasing (`str::to_lowercase`), NOT full case
 // folding. `ﬀ` does not match `ff`, and `İ` lowercases to `i` plus a combining
-// dot. `findRanges` in `packages/react/src/hooks/use-text-search.ts` uses
+// dot. `findRanges` in `packages/native/js/host-runtime.ts` uses
 // JS `toLowerCase`, which follows the same Unicode rules.
 
 /// Lowercase `text` and record, for every folded byte, the byte offset of the
@@ -228,18 +229,17 @@ impl std::fmt::Debug for Needle {
 /// (`İ` is 2 bytes and folds to 3), so a match offset in folded space does not
 /// index the original. The map converts it back exactly.
 fn fold(text: &str) -> (String, Vec<u32>) {
-    let mut folded = String::with_capacity(text.len());
+    let folded = text.to_lowercase();
     let mut map: Vec<u32> = Vec::with_capacity(text.len() + 1);
+    // Contextual lowercase only changes sigma, which keeps the same byte length.
     for (ix, ch) in text.char_indices() {
         for lower in ch.to_lowercase() {
             let len = lower.len_utf8();
-            folded.push(lower);
             for _ in 0..len {
                 map.push(ix as u32);
             }
         }
     }
-    map.push(text.len() as u32);
     (folded, map)
 }
 
@@ -279,7 +279,7 @@ fn utf16_range_to_bytes(text: &str, start: usize, end: usize) -> Option<Range<us
 }
 
 fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    ch.is_alphanumeric() || ch == '_' || ch.general_category_group() == GeneralCategoryGroup::Mark
 }
 
 fn is_whole_word(text: &str, range: &Range<usize>) -> bool {
@@ -453,11 +453,22 @@ fn matches_in(
         return out;
     }
     for hit in spec.needle.find(folded) {
-        let (Some(&start), Some(&end)) = (fold_map.get(hit.start), fold_map.get(hit.end)) else {
+        let (Some(&start), Some(&last)) = (fold_map.get(hit.start), fold_map.get(hit.end - 1))
+        else {
             continue;
         };
-        let range = start as usize..end as usize;
-        if range.start >= range.end {
+        // A hit may end inside an expansion; include the complete source character.
+        let Some(last_char) = text
+            .get(last as usize..)
+            .and_then(|tail| tail.chars().next())
+        else {
+            continue;
+        };
+        let range = start as usize..last as usize + last_char.len_utf8();
+        if out
+            .last()
+            .is_some_and(|previous| range.start < previous.end)
+        {
             continue;
         }
         if !spec.whole_word || is_whole_word(text, &range) {
@@ -785,9 +796,14 @@ mod tests {
     #[test]
     fn a_case_insensitive_needle_searches_the_lowercased_text() {
         let needle = Needle::new("FOO", false);
-        assert_eq!(needle.find("a foo and a FOO").collect::<Vec<_>>(), vec![2..5]);
         assert_eq!(
-            needle.find(&"a foo and a FOO".to_lowercase()).collect::<Vec<_>>(),
+            needle.find("a foo and a FOO").collect::<Vec<_>>(),
+            vec![2..5]
+        );
+        assert_eq!(
+            needle
+                .find(&"a foo and a FOO".to_lowercase())
+                .collect::<Vec<_>>(),
             vec![2..5, 12..15]
         );
     }
@@ -874,6 +890,40 @@ mod tests {
         let hits = find(text, &spec("i\u{307}stanbul"));
         assert_eq!(hits.len(), 1);
         assert_eq!(&text[hits[0].clone()], "İstanbul");
+    }
+
+    #[test]
+    fn contextual_lowercase_and_partial_expansions_keep_original_ranges() {
+        for (text, query, expected) in [
+            ("ΟΣ", "ΟΣ", vec![0..4]),
+            ("ΟΣ ΟΣ", "ος", vec![0..4, 5..9]),
+            ("ΟΣΑ", "οσα", vec![0..6]),
+            ("İ", "i", vec![0..2]),
+            ("xİx", "xi", vec![0..3]),
+            ("İ", "\u{307}", vec![0..2]),
+            ("İ", "i\u{307}", vec![0..2]),
+            ("İİİ", "\u{307}i", vec![0..4]),
+            ("\u{10400}İ fox", "i", vec![4..6]),
+            ("\u{10400}İ fox", "\u{10428}", vec![0..4]),
+        ] {
+            assert_eq!(find(text, &spec(query)), expected, "{text:?} / {query:?}");
+        }
+    }
+
+    #[test]
+    fn all_mark_categories_continue_a_whole_word() {
+        let mut prefix = spec("cafe");
+        prefix.whole_word = true;
+        for mark in ['\u{301}', '\u{93e}', '\u{20dd}'] {
+            let text = format!("cafe{mark}");
+            assert!(find(&text, &prefix).is_empty(), "{text:?}");
+            assert!(find(&format!("{mark}cafe"), &prefix).is_empty());
+            let mut full = spec(&text);
+            full.whole_word = true;
+            assert_eq!(find(&text, &full), vec![0..text.len()]);
+        }
+        prefix.case_sensitive = true;
+        assert!(find("cafe\u{301}", &prefix).is_empty());
     }
 
     #[test]
