@@ -38,7 +38,7 @@ export function readWindowSize(
   } catch {
     // The platform window can still be opening.
   }
-  return DEFAULT_WINDOW_SIZE
+  return { ...DEFAULT_WINDOW_SIZE }
 }
 
 export function readWindowInsets(
@@ -57,7 +57,9 @@ export function readWindowInsets(
     // The platform window can still be opening.
   }
   return {
-    ...insets,
+    safeArea: { ...insets.safeArea },
+    ime: { ...insets.ime },
+    effective: { ...insets.effective },
     keyboardTop: size.height - insets.ime.bottom,
     keyboardVisible: insets.ime.bottom > 0,
     visibleHeight: size.height - insets.effective.top - insets.effective.bottom,

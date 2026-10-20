@@ -922,6 +922,24 @@ function WindowControls() {
 Windows, Linux, and FreeBSD. `zoomWindow()` uses the platform's native zoom or
 maximize operation. These methods are not available in the browser renderer.
 
+### Window measurements
+
+**Snapshots** from `readWindowSize(renderer)` and `readWindowInsets(renderer)`
+are independent objects, including each nested inset. Changing one cannot
+change another read, another inset field, or the renderer's own values.
+
+```ts
+import { readWindowSize, readWindowInsets } from '@gpuix/native/host'
+
+readWindowSize(null) // { width: 800, height: 600 }
+readWindowInsets(null).keyboardVisible // false
+```
+
+Missing or not-yet-open windows use the default size and zero insets.
+`observeWindowSize` and `observeWindowInsets` deliver these same snapshots;
+React's `useWindowSize` / `useWindowInsets` and Solid's `createWindowSize` /
+`createWindowInsets` use the shared readers.
+
 ### File picker
 
 `promptForPaths()` opens the operating system's file picker. It resolves with

@@ -74,6 +74,47 @@ describe("shared host runtime", () => {
     })
   })
 
+  it("returns independent fallback and host geometry snapshots", () => {
+    const failingHost = {
+      getWindowSize() { throw new Error("opening") },
+      getWindowInsets() { throw new Error("opening") },
+    }
+    for (const host of [null, failingHost]) {
+      const size = readWindowSize(host)
+      size.width = 17
+      expect(readWindowSize(host)).toEqual({ width: 800, height: 600 })
+
+      const insets = readWindowInsets(host)
+      insets.safeArea.bottom = 23
+      expect(insets.ime.bottom).toBe(0)
+      expect(insets.effective.bottom).toBe(0)
+      insets.ime.bottom = 42
+      expect(readWindowInsets(host)).toMatchObject({
+        safeArea: { bottom: 0 }, ime: { bottom: 0 }, effective: { bottom: 0 },
+        keyboardTop: 600, keyboardVisible: false, visibleHeight: 600,
+      })
+    }
+
+    const size = { width: 100, height: 50 }
+    const edges = { top: 0, right: 0, bottom: 10, left: 0 }
+    const host = {
+      getWindowSize: () => size,
+      getWindowInsets: () => ({ safeArea: edges, ime: edges, effective: edges }),
+    }
+    readWindowSize(host).width = 1
+    const snapshot = readWindowInsets(host)
+    snapshot.safeArea.bottom = 99
+    expect(snapshot.ime.bottom).toBe(10)
+    expect(snapshot.effective.bottom).toBe(10)
+    edges.bottom = 12
+    expect(snapshot.ime.bottom).toBe(10)
+    expect(readWindowSize(host)).toEqual({ width: 100, height: 50 })
+    expect(readWindowInsets(host)).toMatchObject({
+      safeArea: { bottom: 12 }, ime: { bottom: 12 }, effective: { bottom: 12 },
+      keyboardTop: 38, keyboardVisible: true, visibleHeight: 38,
+    })
+  })
+
   it("retains failed mutations and cleans handlers after success", () => {
     const renderer = new RecordingRenderer()
     const removed: number[] = []
