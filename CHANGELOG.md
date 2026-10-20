@@ -1,5 +1,161 @@
 # Changelog
 
+## 0.11.0
+
+1. **Run an app inside the terminal.** `terminal: true` renders into the current terminal instead of a native window, on macOS and Linux. `GPUIX_TERMINAL=1` turns it on without a code change.
+
+   ```tsx
+   render(<App />, { terminal: true })
+   ```
+
+   Frames render offscreen and are shown with the kitty graphics protocol, in kitty and Ghostty. On the same machine they go through shared memory. Over SSH each frame is sent inline, zlib compressed, with at most two frames in flight so input stays responsive. Mouse, hover, scroll, keyboard with key-up, paste, focus and resize all reach the app. ctrl-c quits, also from a focused text field. The terminal is restored on quit, SIGTERM, SIGINT, a native panic and `process.exit()`.
+
+   `isTerminal()`, exported by `@gpuix/react` and `@gpuix/solid`, tells an app it runs in a terminal, so it can drop the space reserved for the macOS traffic lights. See [Run in a terminal](./README.md#run-in-a-terminal).
+
+2. **Add a headless `Dialog`, and make Escape close only the top overlay.** Same parts as Base UI:
+
+   ```tsx
+   import * as Dialog from '@gpuix/react/dialog' // or '@gpuix/solid/dialog'
+
+   <Dialog.Root>
+     <Dialog.Trigger>Settings</Dialog.Trigger>
+     <Dialog.Portal>
+       <Dialog.Backdrop style={{ backgroundColor: '#00000080' }} />
+       <Dialog.Popup initialFocus={searchRef} finalFocus={composerRef}>
+         <Dialog.Title>Settings</Dialog.Title>
+         <Dialog.Close>Done</Dialog.Close>
+       </Dialog.Popup>
+     </Dialog.Portal>
+   </Dialog.Root>
+   ```
+
+   - `Portal` is a full-window deferred layer, so the dialog paints over `<virtual-list>`. A modal dialog blocks clicks and the wheel behind it
+   - The popup takes focus on open, keeps Tab inside while modal, and returns focus on close. `initialFocus` and `finalFocus` take `true`, `false`, a ref or element, or a function returning one. Without a `Trigger`, focus returns to the element focused when the popup opened
+   - A press on `Backdrop` closes it, unless `disablePointerDismissal` is set
+
+   Escape now runs on one layer stack per window. Every open Dialog, Select, Combobox and Tooltip is a layer, and Escape closes only the most recent one, so a Select inside a Dialog closes first. `event.preventDefault()` in any `onKeyDown` keeps the layer open. Custom overlays join with `<DismissableLayer onEscapeKeyDown>`, or `pushDismissLayer(renderer, layer)` without a framework.
+
+   `<anchored fill="window">` covers the whole window and follows a resize in the same frame. An `<anchored>` with an explicit `backgroundColor: "transparent"` now paints no fill.
+
+3. **Tab and Shift+Tab move focus by default**, like a browser. Any `onKeyDown` can cancel it:
+
+   ```tsx
+   <div
+     tabIndex={0}
+     onKeyDown={(event) => {
+       if (event.key !== 'tab') return
+       event.preventDefault() // keep this Tab, for example to indent
+       insertIndent()
+     }}
+   />
+   ```
+
+   - `event.preventDefault()` cancels the focus move, `event.stopPropagation()` skips ancestor and window `onKeyDown` handlers, `event.defaultPrevented` reports an earlier `preventDefault()`
+   - `render(<App />, { tabNavigation: false })` turns the default off
+   - every key event has a `keystrokeId`, shared by all events of one keystroke
+   - Tab no longer types a tab character into `<input>` or `<textarea>`, and Shift+Tab now leaves them
+   - `Select`, `Combobox` and `Tooltip` triggers are tab stops. An open Select keeps Tab inside. A Combobox closes when focus leaves its input. A press outside an open Select no longer pulls focus back to the trigger
+   - `focusElement(id)` waits until that element exists, so a request made in the same commit that creates it is no longer dropped
+
+   **Breaking:** apps that called `renderer.focusNext()` from a window `onKeyDown` for Tab must remove that call, or Tab moves twice.
+
+4. **Visible keyboard focus, and a headless `Button`.**
+
+   ```tsx
+   import { Button } from '@gpuix/react/button' // or '@gpuix/solid/button'
+
+   <Button onClick={save} disabled={saving}>Save</Button>
+   <div tabIndex={0} style={{ focusVisible: { outlineWidth: 2, outlineColor: '#89b4fa', outlineOffset: 2 } }} />
+   ```
+
+   - `focusVisible` nested style, like `hover` and `active`. It applies after keyboard focus only, like CSS `:focus-visible`
+   - `outlineWidth`, `outlineColor`, `outlineOffset` draw a line outside the border box that takes no layout space and follows `borderRadius`
+   - default focus look: while a control has keyboard focus, every other focusable element renders at 40% opacity. A focused text field dims nothing. Opt out per element with `style.keyboardFocusDim: false`, or for the window with `keyboardFocusDim: false` in `render()` / `createTestRoot()`
+   - small pointer jitter (under 8px) no longer ends keyboard focus styles
+   - `Button` is a tab stop with `role="button"` that fires `onClick` on press, Enter key down and Space key up. `disabled` removes it from the Tab order, `focusableWhenDisabled` keeps it. `buttonProps()` gives the same behavior to your own parts
+
+5. **Add `createPortal(children, target)` to `@gpuix/react`.** It mounts children into an element that is already mounted. Take `target` from a `ref`. Use it for a toast layer, a drag preview or an overlay root. See "Portals" in the README.
+
+6. **Add `onLayout` and `onScrollChange` events.**
+
+   - `onLayout` on `<div>` and `<text>` reports the border box after the first paint and each time the size changes. The payload gains `width` and `height`
+   - `onScrollChange` reports the offset of an `overflow: "scroll"` element after it moves, by wheel, scrollbar drag, `scrollTo` or `scrollIntoView`. The payload gains `scrollX` and `scrollY`. `onScroll` still reports only wheel input
+
+7. **Native scrollbars.** `scrollbarColor` and `scrollbarWidth` paint a scrollbar thumb on an `overflow: "scroll"` container and on a `<virtual-list>`. The thumb moves in the same frame as the content, with no JavaScript in the loop, and takes no pointer input. On a `<virtual-list>`, rows not measured yet count as the average measured row, so the thumb length is right after a few rows.
+
+8. **New styles** for what GPUI already draws:
+
+   - `aspectRatio`
+   - `borderStyle: "dashed"`
+   - `boxShadow` takes an array of shadows, and each shadow takes `inset: true`
+   - `alignItems: "stretch" | "baseline"` and `justifyContent: "space-evenly"`
+
+9. **Add `registerFont(bytes)`** to load a TrueType or OpenType font so `fontFamily` can name it:
+
+   ```tsx
+   renderer.registerFont?.(readFileSync('./Inter-Regular.ttf'))
+   ```
+
+   Text that asked for the family earlier picks it up on the next frame. Fonts GPUI cannot use are rejected with an error.
+
+10. **`setImagePixels` takes `{ format: 'bgra' }`.** BGRA is GPUI's native order, so the upload skips a per-pixel swizzle. ffmpeg (`-pix_fmt bgra`), VideoToolbox and node-canvas raw buffers already produce it.
+
+    ```ts
+    img.current?.setImagePixels(width, height, canvas.toBuffer('raw'), { format: 'bgra' })
+    ```
+
+11. **Add `getElementsAt(x, y)`**, like the DOM's `elementsFromPoint`. It returns the elements under a window point, topmost first, and respects clipping, `pointerEvents: "none"` and deferred `<anchored>` layers. The test renderer has it too.
+
+12. **Add `collectGarbageWhenIdle()`** to `@gpuix/react`. It runs one full garbage collection after the app stops committing for a while, so a long session's heap comes back down after a burst of work. It returns a function that stops it.
+
+13. **macOS frames follow the display link** instead of an 8 ms timer. The pump stays non-blocking, so Bun and Node.js I/O run between frames. A 100 ms fallback handles hidden windows. `startFrameLoop(renderer, { frameMs })` keeps timer polling, and `renderer.setFrameWakeCallback(callback | null)` exposes the native wake for manual pumps.
+
+14. **Windows ARM64 builds.** `@gpuix/native-win32-arm64-msvc` ships alongside x64, and the release includes `example-chat-aarch64-pc-windows-msvc.exe`. Use an ARM64 Node.js or Bun to load it. The chat example now keeps the native Windows title bar.
+
+15. **`@gpuix/react` uses `react-reconciler@^0.33.0` and peers on `react@^19.2.0`.** Apps on React 19.2 no longer need an override.
+
+16. **Fixed Linux apps opening no window under X11.** GPUI's Wayland and X11 compositor selection is now enabled in release builds.
+
+17. **Element boxes are correct.** `getElementBounds()`, automation `click()` and text selection regions now use the border box. Before, padding shifted the box right and down, and a border made it narrower.
+
+18. **Leaving the window ends hover.** The `hover` style, cursor and tooltips no longer stay on the last element until the pointer returns. The test renderer gains `simulateMouseExit` and `nativeSimulateMouseExit`.
+
+19. **`padding` on a `<virtual-list>` insets rows left and right**, not only top and bottom.
+
+20. **Search handles Unicode correctly.** `findRanges` and native highlights match uppercase Greek, cover the full original character for expansions such as `İ`, and keep original offsets. `wholeWord: true` no longer treats combining marks as word boundaries.
+
+21. **Smaller fixes**
+
+    - `onFocus` and `onBlur` fire in the test renderer
+    - `readWindowSize` and `readWindowInsets` return independent snapshots, so mutating one result no longer changes later reads
+    - `observeSelectedText` also delivers a selection change made by its own initial callback
+    - chained automation locators return each element once, so `count()` and `element()` are no longer inflated by overlapping parents
+    - a style change on an element hidden by Suspense or Activity keeps it hidden
+    - docs cover the Node.js runtime and separate `bun --hot` development from normal startup
+
+22. **Faster and leaner**
+
+    - a re-render no longer resends styles and custom props that did not change, and `applyBatch` repaints only when a batch changes something drawn
+    - `root.render()` no longer re-renders every `useGpuix()` consumer. A find bar keystroke in the chat example dropped from about 9 ms to 0.2 ms
+    - `<div>` and `<text>` no longer carry a hidden child to record bounds, so a frame is about 15% cheaper
+    - idle frames no longer walk the whole tree to find focusable elements, about a third less CPU on large trees
+    - find-in-page compiles the query once per keystroke
+    - a 75,000-element chat uses 33.6 MB of native tree heap instead of 44.5 MB, and React releases temporary child lists after mount
+
+    `@gpuix/native/host` exports `sameMutationValue(left, right)` and `EVENT_TYPE_BY_PROP` for adapters.
+
+Fixes https://github.com/remorses/gpuix/issues/73
+Fixes https://github.com/remorses/gpuix/issues/77
+Fixes https://github.com/remorses/gpuix/issues/78
+Fixes https://github.com/remorses/gpuix/issues/84
+Fixes https://github.com/remorses/gpuix/issues/91
+Fixes https://github.com/remorses/gpuix/issues/93
+Fixes https://github.com/remorses/gpuix/issues/95
+Fixes https://github.com/remorses/gpuix/issues/96
+Fixes https://github.com/remorses/gpuix/issues/97
+Fixes https://github.com/remorses/gpuix/issues/98
+Fixes https://github.com/remorses/gpuix/issues/99
+
 ## 0.10.0
 
 1. **Add the official Solid 1 renderer** as `@gpuix/solid`. Solid applications run through normal Bun commands with a preload. The framework-neutral JavaScript runtime now lives in `@gpuix/native`.
