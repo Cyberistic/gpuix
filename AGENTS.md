@@ -196,6 +196,9 @@ gpuix/
 │   │   ├── Cargo.toml
 │   │   └── build.rs
 │   │
+│   ├── gpui-terminal/          # GPUI platform for kitty-graphics terminals
+│   │                           # (`terminal: true`), standalone Rust crate
+│   │
 │   ├── react/                  # React reconciler
 │       ├── src/
 │       │   ├── index.ts        # Public exports
@@ -497,9 +500,11 @@ browser keystroke failed. A tag-qualified selector will do it again.
 ## Terminal mode swaps the platform, not the renderer
 
 `terminal: true` (or `GPUIX_TERMINAL=1`) runs the same `GpuixView` on
-`gpui_terminal`, a GPUI platform in the Zed fork that paints with the kitty
-graphics protocol. On macOS it replaces `MacPlatform` inside the embedded path
-(`EmbeddedPlatform` in `renderer.rs`), so `tick()` and the frame wake hook work
+`gpui_terminal` (`packages/gpui-terminal`), a GPUI platform crate that paints
+with the kitty graphics protocol. It lives in GPUIX, not in the Zed fork. Only
+the offscreen Metal and wgpu readback it calls are fork changes. On macOS it
+replaces `MacPlatform` inside the embedded path (`EmbeddedPlatform` in
+`renderer.rs`), so `tick()` and the frame wake hook work
 unchanged. On Linux it replaces `gpui_platform::application()` on the
 `gpuix-ui` thread. Do not add terminal branches to individual napi methods.
 Details and traps: [docs/terminal-renderer.md](./docs/terminal-renderer.md).

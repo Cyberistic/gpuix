@@ -1,7 +1,7 @@
 ---
 title: GPUI terminal renderer
 description: >
-  How gpui_terminal (Zed fork branch gpuix-terminal) runs GPUI apps inside a
+  How gpui_terminal (packages/gpui-terminal) runs GPUI apps inside a
   kitty-graphics terminal. Frame path, input protocols, research notes from
   terminal-browser, opentui and the kitty spec, and what is left to do.
 ---
@@ -17,8 +17,15 @@ gpui_terminal::application()?.run(|cx| {
 });
 ```
 
-Code: `crates/gpui_terminal` in the `remorses/zed` worktree
-`/Users/morse/Documents/GitHub/zed-gpuix-terminal`, branch `gpuix-terminal`. macOS and Linux.
+Code: `packages/gpui-terminal`, a standalone crate that only uses public GPUI APIs from
+the `zed` submodule. The offscreen renderers it calls (`render_scene_to_pixels`,
+`new_offscreen`) are changes in the `remorses/zed` fork. macOS and Linux.
+
+```bash
+cd packages/gpui-terminal
+cargo test
+cargo build --release --example terminal_hello
+```
 
 | OS | Renderer | Text |
 |---|---|---|
@@ -151,7 +158,7 @@ and ctrl-c. `REMOTE=1` makes it refuse shm, like a terminal on another machine.
 
 ```bash
 uv run --no-project --python 3.13 tmp/fake-kitty.py tmp/out \
-  ../zed-gpuix-terminal/target/release/examples/terminal_hello
+  packages/gpui-terminal/target/release/examples/terminal_hello
 
 # Linux, in Docker with mesa lavapipe (needs lld, libfontconfig-dev, mesa-vulkan-drivers)
 docker exec gpui-term-linux python3 /harness/fake-kitty.py /harness/out \

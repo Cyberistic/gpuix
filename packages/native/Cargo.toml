@@ -90,7 +90,7 @@ gpui_macos = { path = "../../zed/crates/gpui_macos", default-features = false, f
 
 # Renders into the current terminal with the kitty graphics protocol (`terminal: true`).
 [target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui_terminal = { path = "../../zed/crates/gpui_terminal" }
+gpui_terminal = { path = "../gpui-terminal" }
 
 # Same crate GPUI uses. A .node cannot ship an exe manifest, so Windows DPI
 # awareness is set at runtime in renderer.rs instead of via windows-manifest.
