@@ -2703,6 +2703,20 @@ It fires once when the selected ranges change, including a clear to empty
 
 The payload is a normal `EventPayload`. `value` is the joined selected text.
 
+**Custom hosts** can use `observeSelectedText(renderer, subscribe, callback)`
+from `@gpuix/native/host` (also re-exported by both adapters). `subscribe`
+attaches a listener for selection-change payloads and returns an unsubscribe
+function. The helper subscribes before reading and delivering the initial
+selection, so synchronous changes made by that callback are not lost.
+
+```ts
+const stop = observeSelectedText(renderer, subscribe, (text) => console.log(text))
+stop()
+```
+
+An absent selection is `null`. If the initial read or callback throws, the
+helper unsubscribes before propagating the error.
+
 Selection works because each painted text element registers itself into a
 per-frame registry in **paint order**, which is document order. A drag anchored
 in one element resolves against that registry into per-element spans: partial in

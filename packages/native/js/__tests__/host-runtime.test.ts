@@ -1,4 +1,6 @@
+import { EventEmitter } from "node:events"
 import { describe, expect, it } from "vitest"
+import type { EventPayload } from "../../index.js"
 import {
   createMutationQueue,
   createRendererState,
@@ -281,5 +283,35 @@ describe("shared host runtime", () => {
     stop()
     listener?.({ value: "ignored" })
     expect(values).toEqual(["initial", "changed"])
+  })
+
+  it("subscribes before the initial selection callback and cleans up initialization errors", () => {
+    const events = new EventEmitter()
+    let selected: string | null = "old"
+    const renderer = { getSelectedText: () => selected }
+    const subscribe = (listener: (event: EventPayload) => void) => {
+      events.on("selectionChange", listener)
+      return () => { events.off("selectionChange", listener) }
+    }
+    const values: Array<string | null> = []
+    const stop = observeSelectedText(renderer, subscribe, (value) => {
+      values.push(value)
+      if (value !== "old") return
+      selected = "new"
+      events.emit("selectionChange", { elementId: 0, eventType: "selectionChange", value: selected })
+    })
+    expect(values).toEqual(["old", "new"])
+    selected = null
+    events.emit("selectionChange", { elementId: 0, eventType: "selectionChange" })
+    stop()
+    events.emit("selectionChange", { elementId: 0, eventType: "selectionChange", value: "ignored" })
+    expect(values).toEqual(["old", "new", null])
+    expect(events.listenerCount("selectionChange")).toBe(0)
+
+    const failure = new Error("initial selection failed")
+    expect(() => observeSelectedText(renderer, subscribe, () => { throw failure })).toThrow(failure)
+    expect(events.listenerCount("selectionChange")).toBe(0)
+    expect(() => observeSelectedText({ getSelectedText() { throw failure } }, subscribe, () => {})).toThrow(failure)
+    expect(events.listenerCount("selectionChange")).toBe(0)
   })
 })

@@ -123,8 +123,14 @@ export function observeSelectedText(
   subscribe: (listener: (event: EventPayload) => void) => () => void,
   callback: (text: string | null) => void
 ): () => void {
-  callback(renderer.getSelectedText() ?? null)
-  return subscribe((event) => callback(event.value ?? null))
+  const stop = subscribe((event) => callback(event.value ?? null))
+  try {
+    callback(renderer.getSelectedText() ?? null)
+  } catch (error) {
+    stop()
+    throw error
+  }
+  return stop
 }
 
 export interface FindRangesOptions {
