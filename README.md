@@ -3507,7 +3507,17 @@ like in a browser.
 > </div>
 > ```
 
-> **Note: GPUI defaults text color to black, not white.** Unlike CSS, GPUI does not inherit `color` from parent elements. Every `<text>` element that doesn't set an explicit `color` style will render as black — invisible on dark backgrounds. Always set `color` on your text elements or on a parent `<div>` (which applies `text_color` to all children in that subtree via GPUI's `Styled` trait).
+**Text contrast.** Unstyled text defaults to black. Set `color` on the text or
+on a parent `<div>` for its subtree:
+
+```tsx
+<div style={{ color: '#1F1530', backgroundColor: '#F4F2FAD9' }}>
+  <text>Readable on a light surface</text>
+</div>
+```
+
+On a translucent surface, contrast also depends on what is behind the window.
+Dark text can become hard to read even when its `color` is set correctly.
 
 ## Automation
 
@@ -3541,6 +3551,10 @@ await app.getByTestId('composer').fill('hello gpuix')
 await app.getByTestId('send').click()
 await app.screenshot({ path: 'sent.png' })
 ```
+
+`app.screenshot()` captures GPUI's rendered surface, not the desktop or the
+macOS blur behind a translucent window. For a visual check of transparency and
+contrast, capture the actual macOS window with `screencapture -l <window-id>`.
 
 That is the chat example. The real test lives in
 [`examples/chat.test.tsx`](https://github.com/remorses/gpuix/blob/main/examples/chat.test.tsx).
