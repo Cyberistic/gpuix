@@ -440,6 +440,9 @@ enum UiCommand {
     ZoomWindow,
     ToggleFullscreen,
     SetWindowTitle(String),
+    Notify(crate::notifications::NotificationOptions),
+    DismissNotification(String),
+    SetAppIdentity(String, String),
     PromptForPaths {
         options: gpui::PathPromptOptions,
         deferred: PathPromptDeferred,
@@ -570,6 +573,18 @@ async fn run_ui_commands(
             UiCommand::ZoomWindow => window.update(cx, |_view, window, _cx| window.zoom_window()),
             UiCommand::ToggleFullscreen => {
                 window.update(cx, |_view, window, _cx| window.toggle_fullscreen())
+            }
+            UiCommand::Notify(options) => {
+                cx.update(|cx| cx.show_system_notification(options.into_gpui()));
+                anyhow::Ok(())
+            }
+            UiCommand::DismissNotification(tag) => {
+                cx.update(|cx| cx.dismiss_system_notification(&tag));
+                anyhow::Ok(())
+            }
+            UiCommand::SetAppIdentity(identifier, name) => {
+                cx.update(|cx| cx.set_app_identity(&identifier, &name));
+                anyhow::Ok(())
             }
             UiCommand::SetWindowTitle(title) => window.update(cx, move |view, window, cx| {
                 view.window_title = title;
@@ -1573,7 +1588,6 @@ impl GpuixRenderer {
         *self.initialized.lock().unwrap()
     }
 
-
     /// Wake JavaScript after the display link queues a frame. Returns true on macOS,
     /// false on other platforms. Call tick() in the callback; it never blocks.
     /// Wakes coalesce while JavaScript is busy and do not keep the process alive.
@@ -2524,6 +2538,78 @@ impl GpuixRenderer {
     }
 
     /// Simulate space-separated keystrokes through the focused element's input pipeline.
+    /// Post an OS notification. A tag that matches an earlier one replaces it
+    /// where the platform supports it; delivery being unavailable is a no-op.
+    #[napi]
+    pub fn notify(&self, options: crate::notifications::NotificationOptions) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            update_window_without_view(move |_window, cx| {
+                cx.show_system_notification(options.into_gpui())
+            })
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            self.send_ui_command(UiCommand::Notify(options))
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        Err(Error::from_reason("Unsupported operating system"))
+    }
+
+    /// Remove the delivered or pending notification with this tag.
+    #[napi]
+    pub fn dismiss_notification(&self, tag: String) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            update_window_without_view(move |_window, cx| cx.dismiss_system_notification(&tag))
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            self.send_ui_command(UiCommand::DismissNotification(tag))
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        Err(Error::from_reason("Unsupported operating system"))
+    }
+
+    /// Set the identity the OS attributes notifications to.
+    ///
+    /// Windows drops toasts without an AppUserModelID; this is the only entry
+    /// point for it (`WindowOptions.appId` is the Wayland/X11 window class).
+    #[napi]
+    pub fn set_app_identity(&self, identifier: String, name: String) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            update_window_without_view(move |_window, cx| cx.set_app_identity(&identifier, &name))
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            self.send_ui_command(UiCommand::SetAppIdentity(identifier, name))
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        Err(Error::from_reason("Unsupported operating system"))
+    }
+
     #[napi]
     pub fn simulate_keystrokes(&self, keystrokes: String) -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -3869,7 +3955,13 @@ fn window_key_events(
                     return;
                 }
                 if key_up {
-                    emit_key_event(&callback_up, event_id, "windowKeyUp", &event.keystroke, None);
+                    emit_key_event(
+                        &callback_up,
+                        event_id,
+                        "windowKeyUp",
+                        &event.keystroke,
+                        None,
+                    );
                 }
             });
         },
@@ -4041,10 +4133,8 @@ impl GpuixView {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> std::result::Result<(), String> {
-        let image = crate::custom_elements::img::render_image_from_encoded(
-            bytes,
-            cx.svg_renderer(),
-        )?;
+        let image =
+            crate::custom_elements::img::render_image_from_encoded(bytes, cx.svg_renderer())?;
         self.set_live_image(id, image, window, cx)
     }
 
@@ -4314,7 +4404,9 @@ impl GpuixView {
                 break None;
             };
             if let Some(entry) = self.virtual_lists.get(&parent_id) {
-                break entry.logical_index_of(current).map(|index| (parent_id, index));
+                break entry
+                    .logical_index_of(current)
+                    .map(|index| (parent_id, index));
             }
             current = parent_id;
         };
@@ -4764,7 +4856,12 @@ impl VirtualListEntry {
 }
 
 impl GpuixView {
-    pub(crate) fn request_focus(&mut self, id: u64, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn request_focus(
+        &mut self,
+        id: u64,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.reveal_virtual_list_ancestor(id);
         if let Some(handle) = self.focus_handles.get(&id) {
             self.pending_focus_element = None;
@@ -6731,10 +6828,7 @@ fn report_layout(
     callback: &EventCallback,
     cx: &mut gpui::App,
 ) {
-    let size = (
-        f32::from(bounds.size.width),
-        f32::from(bounds.size.height),
-    );
+    let size = (f32::from(bounds.size.width), f32::from(bounds.size.height));
     {
         let mut reports = reports.borrow_mut();
         let unchanged = reports.sizes.get(&id).is_some_and(|last| {
