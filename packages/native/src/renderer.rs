@@ -88,9 +88,9 @@ pub(crate) fn parse_font_weight(value: &crate::style::FontWeightValue) -> gpui::
 
 /// Abstracted event callback shared by desktop, browser, and test renderers.
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub(crate) type EventCallback = Arc<dyn Fn(EventPayload) + Send + Sync>;
+pub type EventCallback = Arc<dyn Fn(EventPayload) + Send + Sync>;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub(crate) type EventCallback = Rc<dyn Fn(EventPayload)>;
+pub type EventCallback = Rc<dyn Fn(EventPayload)>;
 
 fn raw_dimension_u32(value: f64, label: &str) -> std::result::Result<u32, String> {
     if !value.is_finite() || value <= 0.0 || value.fract() != 0.0 || value > u32::MAX as f64 {
@@ -3729,7 +3729,12 @@ impl Drop for GpuixRenderer {
 
 // ── GPUI View ────────────────────────────────────────────────────────
 
-pub(crate) struct GpuixView {
+/// The root view of a GPUIX window.
+///
+/// A custom element names it in its `render` method so it can create entities,
+/// focus handles and subscriptions in the window it draws into. The fields stay
+/// crate-private.
+pub struct GpuixView {
     pub(crate) tree: Arc<Mutex<RetainedTree>>,
     pub(crate) event_callback: Option<EventCallback>,
     pub(crate) window_title: String,
@@ -6895,7 +6900,7 @@ const PAINT_REPORT_EPSILON: f32 = 0.01;
 /// caller customize it via a closure, then sends it through the callback.
 /// Production: queues on Node.js event loop via ThreadsafeFunction.
 /// Tests: pushes to a synchronous Vec for drainEvents().
-pub(crate) fn emit_event_full(
+pub fn emit_event_full(
     callback: &Option<EventCallback>,
     element_id: u64,
     event_type: &str,
