@@ -255,6 +255,9 @@ export type ElementType =
   | "diff"
   | "markdown"
   | "virtual-list"
+  /** An element another crate added with `register_custom_element`.
+   *  Those names always contain a `-`. */
+  | `${string}-${string}`
 
 // ── Theme ────────────────────────────────────────────────────────────
 

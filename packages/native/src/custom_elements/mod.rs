@@ -13,12 +13,14 @@ use std::collections::{HashMap, HashSet};
 
 use crate::renderer::EventCallback;
 
-pub mod anchored;
-pub mod code;
-pub mod diff;
-pub mod img;
-pub mod input;
-pub mod markdown;
+// Built-in adapters stay crate-private: the addon surface is the traits and
+// `register_custom_element`, not GPUIX's own element internals.
+pub(crate) mod anchored;
+pub(crate) mod code;
+pub(crate) mod diff;
+pub(crate) mod img;
+pub(crate) mod input;
+pub(crate) mod markdown;
 
 // ── Render context ───────────────────────────────────────────────────
 
@@ -110,7 +112,7 @@ impl CustomRenderContext<'_> {
 ///
 /// The caller must have given `el` a host-derived id already: gpui keys both the
 /// pseudo-style state and the accessibility node off that id.
-pub(crate) fn custom_surface(
+pub fn custom_surface(
     mut el: gpui::Stateful<gpui::Div>,
     ctx: &CustomRenderContext,
 ) -> gpui::Stateful<gpui::Div> {
@@ -141,7 +143,7 @@ pub(crate) fn custom_surface(
 /// Generic over the element, not just `Stateful<Div>`, because `<img>` and
 /// `<svg>` are gpui leaves and cannot hold a child. They declare the same props
 /// as everything else, so they have to wire the same events.
-pub(crate) fn wire_standard_events<E: gpui::StatefulInteractiveElement>(
+pub fn wire_standard_events<E: gpui::StatefulInteractiveElement>(
     mut el: E,
     ctx: &CustomRenderContext,
 ) -> E {
@@ -257,6 +259,76 @@ pub trait CustomElementFactory: 'static {
     fn create(&self, id: u64) -> Box<dyn CustomElement>;
 }
 
+// ── Registration from other crates ───────────────────────────────────
+
+/// One element a downstream crate registered: the type name read once at
+/// registration, and the constructor that gives each registry a new factory.
+type RegisteredCustomElement = (String, fn() -> Box<dyn CustomElementFactory>);
+
+/// Process-wide constructors, seen by every registry built after registration.
+/// A function pointer rather than a boxed factory, so registries share the
+/// constructor and not the factory instance.
+static REGISTERED: std::sync::Mutex<Vec<RegisteredCustomElement>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Every built-in custom element, in registration order. Registration refuses
+/// these names, so an element GPUIX ships can never be replaced by an addon.
+const BUILT_IN_FACTORIES: &[fn() -> Box<dyn CustomElementFactory>] = &[
+    || Box::new(input::InputFactory),
+    || Box::new(input::TextareaFactory),
+    || Box::new(anchored::AnchoredFactory),
+    || Box::new(img::ImgFactory),
+    || Box::new(img::SvgFactory),
+    || Box::new(code::CodeFactory),
+    || Box::new(diff::DiffFactory),
+    || Box::new(markdown::MarkdownFactory),
+];
+
+/// Add a native element to every [`CustomElementRegistry`] built after this
+/// call.
+///
+/// A crate that links `gpuix-native` into its own Node addon calls this once at
+/// load time, before the first renderer exists. Renderers created earlier keep
+/// the elements they started with.
+///
+/// The type comes from [`CustomElementFactory::element_type`] and must contain a
+/// `-`, like a DOM custom element. Built-in names and names already registered
+/// are refused; the error says which rule failed.
+pub fn register_custom_element(
+    factory: fn() -> Box<dyn CustomElementFactory>,
+) -> Result<(), String> {
+    let element_type = factory().element_type().to_string();
+
+    if BUILT_IN_FACTORIES
+        .iter()
+        .any(|built_in| built_in().element_type() == element_type.as_str())
+    {
+        return Err(format!(
+            "`{element_type}` is a built-in GPUIX element and cannot be registered"
+        ));
+    }
+    if !element_type.contains('-') {
+        return Err(format!(
+            "`{element_type}` must contain a `-`, like a DOM custom element"
+        ));
+    }
+
+    let mut registered = lock_registered();
+    if registered.iter().any(|(name, _)| name == &element_type) {
+        return Err(format!("`{element_type}` is already registered"));
+    }
+    registered.push((element_type, factory));
+    Ok(())
+}
+
+/// The registered constructors. Nothing in the list is half-written when a
+/// panic unwinds, so a poisoned lock still holds every entry.
+fn lock_registered() -> std::sync::MutexGuard<'static, Vec<RegisteredCustomElement>> {
+    REGISTERED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 // ── Registry ─────────────────────────────────────────────────────────
 
 /// Stores one custom adapter together with the state already synchronized into it.
@@ -313,17 +385,16 @@ impl CustomElementRegistry {
         }
     }
 
-    /// Create a registry pre-loaded with all built-in custom elements.
+    /// Create a registry pre-loaded with all built-in custom elements, then
+    /// every element added with [`register_custom_element`].
     pub fn with_defaults() -> Self {
         let mut registry = Self::new();
-        registry.register(Box::new(input::InputFactory));
-        registry.register(Box::new(input::TextareaFactory));
-        registry.register(Box::new(anchored::AnchoredFactory));
-        registry.register(Box::new(img::ImgFactory));
-        registry.register(Box::new(img::SvgFactory));
-        registry.register(Box::new(code::CodeFactory));
-        registry.register(Box::new(diff::DiffFactory));
-        registry.register(Box::new(markdown::MarkdownFactory));
+        for factory in BUILT_IN_FACTORIES {
+            registry.register(factory());
+        }
+        for (_, factory) in lock_registered().clone() {
+            registry.register(factory());
+        }
         registry
     }
 
@@ -450,6 +521,12 @@ impl CustomElementRegistry {
     }
 }
 
+impl Default for CustomElementRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
@@ -564,5 +641,88 @@ mod tests {
         assert!(registry.get_or_create(42, "first").is_some());
         assert!(registry.get_or_create(42, "second").is_some());
         assert_eq!(destroyed.get(), 1);
+    }
+
+    struct NamedFactory(&'static str);
+
+    impl CustomElementFactory for NamedFactory {
+        fn element_type(&self) -> &str {
+            self.0
+        }
+
+        fn create(&self, _id: u64) -> Box<dyn CustomElement> {
+            Box::new(RecordingElement {
+                updates: Rc::new(RefCell::new(Vec::new())),
+                destroyed: Rc::new(Cell::new(0)),
+            })
+        }
+    }
+
+    // Registration is process-wide and tests share the process, so every test
+    // registers names no other test uses.
+    #[test]
+    fn registration_requires_a_hyphenated_name() {
+        let error = register_custom_element(|| Box::new(NamedFactory("editor"))).unwrap_err();
+        assert!(error.contains("must contain a `-`"), "{error}");
+    }
+
+    #[test]
+    fn registration_refuses_built_in_names() {
+        // A non-capturing closure is a `fn`, but a loop variable is a capture,
+        // so each built-in needs its own call.
+        macro_rules! refuses {
+            ($($name:literal),+) => {$(
+                let error = register_custom_element(|| Box::new(NamedFactory($name))).unwrap_err();
+                assert!(error.contains("built-in"), "{}: {error}", $name);
+            )+};
+        }
+        refuses!("input", "textarea", "anchored", "img", "svg", "code", "diff", "markdown");
+    }
+
+    #[test]
+    fn registration_refuses_a_name_that_is_already_registered() {
+        register_custom_element(|| Box::new(NamedFactory("test-duplicate"))).unwrap();
+        let error =
+            register_custom_element(|| Box::new(NamedFactory("test-duplicate"))).unwrap_err();
+        assert!(error.contains("already registered"), "{error}");
+    }
+
+    static CONSTRUCTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    struct CountedFactory;
+
+    impl CustomElementFactory for CountedFactory {
+        fn element_type(&self) -> &str {
+            "test-counted"
+        }
+
+        fn create(&self, _id: u64) -> Box<dyn CustomElement> {
+            Box::new(RecordingElement {
+                updates: Rc::new(RefCell::new(Vec::new())),
+                destroyed: Rc::new(Cell::new(0)),
+            })
+        }
+    }
+
+    // The only test that builds a registry, so the construction count is not
+    // racing another `with_defaults` call.
+    #[test]
+    fn a_registered_factory_builds_its_own_element_in_every_new_registry() {
+        use std::sync::atomic::Ordering;
+
+        register_custom_element(|| {
+            CONSTRUCTIONS.fetch_add(1, Ordering::SeqCst);
+            Box::new(CountedFactory)
+        })
+        .unwrap();
+
+        let before = CONSTRUCTIONS.load(Ordering::SeqCst);
+        let mut registry = CustomElementRegistry::with_defaults();
+        assert_eq!(CONSTRUCTIONS.load(Ordering::SeqCst) - before, 1);
+        assert!(registry.get_or_create(1, "test-counted").is_some());
+        assert!(
+            registry.get_or_create(2, "code").is_some(),
+            "built-ins still load after the appended elements"
+        );
     }
 }

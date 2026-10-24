@@ -16,7 +16,7 @@ mod accessibility;
 mod app_menu;
 mod automation;
 mod color;
-mod custom_elements;
+pub mod custom_elements;
 mod diff;
 mod element_tree;
 mod markdown;
@@ -39,8 +39,17 @@ mod updater;
 ))]
 mod test_renderer;
 
+pub use custom_elements::{
+    custom_surface, register_custom_element, wire_standard_events, CustomElement,
+    CustomElementFactory, CustomRenderContext,
+};
 pub use element_tree::*;
+/// The GPUI this renderer is built on. A custom element must use this copy:
+/// a second GPUI in the same addon cannot draw into GPUIX's window.
+pub use gpui;
 pub use renderer::*;
+/// How a custom element sends an event back to JS.
+pub use renderer::{emit_event_full, EventCallback};
 pub use style::*;
 
 #[cfg(any(
@@ -132,5 +141,48 @@ mod tests {
                 "{err}"
             ),
         }
+    }
+}
+
+/// The imports a downstream addon makes. Every path here must resolve through
+/// the crate-root re-exports; `crate::renderer` and `crate::custom_elements` are
+/// deliberately not imported, so moving one of these names back to `pub(crate)`
+/// breaks this build.
+#[cfg(all(test, not(all(target_arch = "wasm32", target_os = "unknown"))))]
+mod addon_surface_tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::{
+        custom_surface, emit_event_full, register_custom_element, wire_standard_events,
+        CustomRenderContext, EventCallback, EventPayload,
+    };
+
+    #[test]
+    fn an_addon_names_the_surface_from_the_crate_root_and_emits_an_event() {
+        // Each item resolves through its crate-root re-export; moving one back
+        // to `pub(crate)` stops this test from compiling.
+        let _register = register_custom_element;
+        let _surface: fn(
+            gpui::Stateful<gpui::Div>,
+            &CustomRenderContext,
+        ) -> gpui::Stateful<gpui::Div> = custom_surface;
+        // `Stateful<Div>` is the root the built-in adapters wire here.
+        let _wire = wire_standard_events::<gpui::Stateful<gpui::Div>>;
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let callback: EventCallback = {
+            let seen = seen.clone();
+            Arc::new(move |payload: EventPayload| seen.lock().unwrap().push(payload))
+        };
+
+        emit_event_full(&Some(callback), 7, "click", |payload| {
+            payload.button = Some(0);
+        });
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].element_id, 7.0);
+        assert_eq!(seen[0].event_type, "click");
+        assert_eq!(seen[0].button, Some(0));
     }
 }

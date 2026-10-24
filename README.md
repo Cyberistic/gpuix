@@ -3049,6 +3049,105 @@ Bash, TOML, YAML, Markdown, HTML, CSS, C.
 | `anchored`      | Positioned overlay                               |
 | `canvas`        | Custom drawing (planned)                         |
 
+### Your own native elements
+
+A Rust crate can add its own GPUI component as an element. Build a Node addon
+that links `gpuix-native` and registers the element at load time, then point the
+app at that addon:
+
+```bash
+NAPI_RS_NATIVE_LIBRARY_PATH=./my-addon.node bun app.tsx
+```
+
+`gpuix_native::gpui` is the GPUI the renderer uses. Take GPUI from there (or
+from the same checkout) or the element has no window to draw into.
+
+```rust
+use gpuix_native::gpui;
+use gpuix_native::{
+    register_custom_element, CustomElement, CustomElementFactory, CustomRenderContext,
+    GpuixView,
+};
+
+struct Greeting {
+    name: String,
+}
+
+impl CustomElement for Greeting {
+    fn render(
+        &mut self,
+        ctx: CustomRenderContext,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<GpuixView>,
+    ) -> gpui::AnyElement {
+        ctx.text(0, format!("Hello, {}", self.name), None)
+    }
+
+    fn set_prop(&mut self, key: &str, value: serde_json::Value) {
+        if key == "name" {
+            self.name = value.as_str().unwrap_or_default().to_string();
+        }
+    }
+
+    fn supported_props(&self) -> &'static [&'static str] {
+        &["name"]
+    }
+
+    fn supported_events(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn destroy(&mut self) {}
+}
+
+struct GreetingFactory;
+
+impl CustomElementFactory for GreetingFactory {
+    fn element_type(&self) -> &str {
+        "my-greeting"
+    }
+
+    fn create(&self, _id: u64) -> Box<dyn CustomElement> {
+        Box::new(Greeting { name: String::new() })
+    }
+}
+
+#[napi_derive::module_init]
+fn init() {
+    register_custom_element(|| Box::new(GreetingFactory)).unwrap();
+}
+```
+
+Rules:
+
+- **Names contain a `-`**, like DOM custom elements, so a name never collides
+  with an element GPUIX adds later. Built-in names and names already registered
+  are refused; the error sentence names the rule.
+- **Register before the first renderer.** Registries created earlier keep the
+  elements they started with.
+- **Paint text through `ctx.text` / `ctx.chrome_text`**, so selection and
+  `getPaintedText()` keep working.
+- **Reuse the host surface.** `custom_surface` applies `style`, `hover` and
+  `active`, tracks bounds and accessibility, and installs the handlers for
+  `supported_events`. `emit_event_full` sends an event through the render
+  context's `event_callback`.
+- Props arrive in `set_prop` as JSON. An element that takes keyboard input
+  owns a GPUI `FocusHandle`; see [Focus and keyboard
+  navigation](#focus-and-keyboard-navigation).
+
+`@gpuix/solid` accepts hyphenated tags; `@gpuix/react` passes any tag through.
+Declare the props in TypeScript with module augmentation:
+
+```ts
+declare module "@gpuix/solid/jsx-runtime" {
+  namespace JSX {
+    interface IntrinsicElements {
+      "my-greeting": { name?: string }
+    }
+  }
+}
+```
+
 ## Images and icons
 
 `<img>` takes a **filesystem path, data URL, or http(s) URL**. Resolve local

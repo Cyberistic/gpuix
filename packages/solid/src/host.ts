@@ -130,7 +130,9 @@ function isElementType(type: string): type is ElementType {
     case "virtual-list":
       return true
     default:
-      return false
+      // A Rust addon registers its element with `register_custom_element`,
+      // which refuses names without a `-`.
+      return type.includes("-")
   }
 }
 
