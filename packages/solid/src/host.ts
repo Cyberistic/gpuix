@@ -4,7 +4,7 @@ import {
   BUILT_IN_TYPES,
   EVENT_PROP_NAMES,
   EVENT_TYPE_BY_PROP,
-  UNIVERSAL_PROPS,
+  isUniversalProp,
   registerEventHandler,
   serializeCustomProp,
   unregisterEventHandler,
@@ -150,7 +150,7 @@ function eventTypeFor(name: string): string | undefined {
 }
 
 function customPropAllowed(node: HostElement, name: string): boolean {
-  return !BUILT_IN_TYPES.has(node.type) || UNIVERSAL_PROPS.has(name)
+  return !BUILT_IN_TYPES.has(node.type) || isUniversalProp(name)
 }
 
 export function setHostProperty(

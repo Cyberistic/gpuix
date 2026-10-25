@@ -409,6 +409,10 @@ export interface HighlightSpec {
 // Props passed to elements.
 // Element IDs are auto-generated numeric IDs (not user-settable).
 // Framework adapters add their own children, key, and ref fields.
+
+/** Value an `aria-*` custom prop may carry, before the native mapper validates it. */
+export type AriaPropValue = string | number | boolean | undefined
+
 export interface HostProps {
   style?: StyleDesc
 
@@ -508,6 +512,18 @@ export interface HostProps {
   "aria-valuetext"?: string
   /** Heading level, 1-based. */
   "aria-level"?: number
+  /**
+   * Any other ARIA attribute, forwarded to the native accessibility mapper.
+   *
+   * Mapped today: `aria-keyshortcuts`, `aria-placeholder`, `aria-pressed`
+   * (`true`, `false`, `"mixed"`), `aria-valuenow`, `aria-valuemin`,
+   * `aria-valuemax`, `aria-orientation` (`"horizontal"` / `"vertical"`),
+   * `aria-posinset`, `aria-setsize`, `aria-rowindex`, `aria-colindex`,
+   * `aria-rowcount`, and `aria-colcount` (positive integers). Any other
+   * `aria-*` attribute is accepted and ignored by the runtime, exactly like an
+   * unknown ARIA token.
+   */
+  [aria: `aria-${string}`]: AriaPropValue
   /** Stable locator id for automation. */
   testId?: string
   /** Internal native animation description used by motion components. */
@@ -537,13 +553,8 @@ export type VirtualListShared = {
   overdraw?: number
   onVisibleRange?: (event: EventPayload) => void
   role?: string
-  "aria-label"?: string
-  "aria-description"?: string
-  "aria-id"?: string
-  "aria-expanded"?: boolean
-  "aria-selected"?: boolean
-  "aria-valuetext"?: string
-  "aria-level"?: number
+  /** Any `aria-*` attribute; see `HostProps`. */
+  [aria: `aria-${string}`]: AriaPropValue
   testId?: string
 }
 
