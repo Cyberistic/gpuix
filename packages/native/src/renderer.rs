@@ -332,6 +332,17 @@ fn recv_ui_response<T>(receiver: std::sync::mpsc::Receiver<T>, operation: &str) 
 }
 
 #[cfg(target_os = "macos")]
+fn with_app<R>(update: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
+    GPUI_APP.with(|app| {
+        let app = app.borrow();
+        let app = app
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
+        Ok(app.update(update))
+    })
+}
+
+#[cfg(target_os = "macos")]
 fn update_window<R>(
     update: impl FnOnce(&mut GpuixView, &mut gpui::Window, &mut gpui::Context<GpuixView>) -> R,
 ) -> Result<R> {
@@ -339,17 +350,11 @@ fn update_window<R>(
         .with(|window| *window.borrow())
         .ok_or_else(|| Error::from_reason("GPUI window is not initialized"))?;
 
-    GPUI_APP.with(|app| {
-        let app = app.borrow();
-        let app = app
-            .as_ref()
-            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
-        app.update(|cx| {
-            window
-                .update(cx, update)
-                .map_err(|error| Error::from_reason(error.to_string()))
-        })
-    })
+    with_app(|cx| {
+        window
+            .update(cx, update)
+            .map_err(|error| Error::from_reason(error.to_string()))
+    })?
 }
 
 #[cfg(target_os = "macos")]
@@ -440,6 +445,10 @@ enum UiCommand {
     ZoomWindow,
     ToggleFullscreen,
     SetWindowTitle(String),
+    WriteClipboard(String),
+    ReadClipboard {
+        response: SyncSender<Option<String>>,
+    },
     PromptForPaths {
         options: gpui::PathPromptOptions,
         deferred: PathPromptDeferred,
@@ -576,6 +585,16 @@ async fn run_ui_commands(
                 cx.notify();
                 window.refresh();
             }),
+            UiCommand::WriteClipboard(text) => {
+                cx.update(move |cx| crate::clipboard::write_text(cx, text));
+                Ok(())
+            }
+            UiCommand::ReadClipboard { response } => {
+                cx.update(move |cx| {
+                    response.send(crate::clipboard::read(cx)).ok();
+                });
+                Ok(())
+            }
             UiCommand::PromptForPaths { options, deferred } => {
                 let background_executor = cx.background_executor().clone();
                 let receiver = cx.update(|cx| cx.prompt_for_paths(options));
@@ -1908,6 +1927,58 @@ impl GpuixRenderer {
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         return self.send_ui_command(UiCommand::SetWindowTitle(title));
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        Err(Error::from_reason(
+            "The production GPUIX renderer does not support this operating system",
+        ))
+    }
+
+    /// Write text to the OS clipboard.
+    ///
+    /// An empty string is a real clipboard entry, so it clears the clipboard
+    /// instead of leaving the previous contents behind.
+    #[napi]
+    pub fn write_to_clipboard(&self, text: String) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return with_app(move |cx| crate::clipboard::write_text(cx, text));
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        return self.send_ui_command(UiCommand::WriteClipboard(text));
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        Err(Error::from_reason(
+            "The production GPUIX renderer does not support this operating system",
+        ))
+    }
+
+    /// Read the clipboard's text, or null when it holds no text at all: the
+    /// clipboard is empty, or it holds an image or files.
+    ///
+    /// Synchronous, because every desktop GPUI platform reads the platform
+    /// clipboard directly. On Windows and Linux the read runs on the UI thread
+    /// and only the JavaScript thread waits; the UI thread never blocks.
+    #[napi]
+    pub fn read_from_clipboard(&self) -> Result<Option<String>> {
+        #[cfg(target_os = "macos")]
+        return with_app(|cx| crate::clipboard::read(cx));
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::ReadClipboard { response })?;
+            return recv_ui_response(receiver, "the clipboard read");
+        }
 
         #[cfg(not(any(
             target_os = "macos",

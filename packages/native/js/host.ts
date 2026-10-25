@@ -700,6 +700,8 @@ export type NativeRenderer = MutationHost &
       | "getWindowSize"
       | "getWindowInsets"
       | "setWindowTitle"
+      | "writeToClipboard"
+      | "readFromClipboard"
       | "registerFont"
       | "promptForPaths"
       | "activateWindow"
