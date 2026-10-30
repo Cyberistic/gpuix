@@ -2028,6 +2028,7 @@ PascalCase. `"none"` and `"presentation"` produce no node.
 | `aria-level`        | heading level                             |
 | `aria-keyshortcuts` | keyboard shortcut hint                    |
 | `aria-placeholder`  | placeholder text                          |
+| `aria-checked`      | toggled: `true`, `false`, or `"mixed"`    |
 | `aria-pressed`      | toggled: `true`, `false`, or `"mixed"`    |
 | `aria-orientation`  | `"horizontal"` or `"vertical"`            |
 | `aria-posinset`     | position in a set                         |

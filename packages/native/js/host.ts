@@ -515,8 +515,8 @@ export interface HostProps {
   /**
    * Any other ARIA attribute, forwarded to the native accessibility mapper.
    *
-   * Mapped today: `aria-keyshortcuts`, `aria-placeholder`, `aria-pressed`
-   * (`true`, `false`, `"mixed"`), `aria-valuenow`, `aria-valuemin`,
+   * Mapped today: `aria-keyshortcuts`, `aria-placeholder`, `aria-checked` and
+   * `aria-pressed` (`true`, `false`, `"mixed"`), `aria-valuenow`, `aria-valuemin`,
    * `aria-valuemax`, `aria-orientation` (`"horizontal"` / `"vertical"`),
    * `aria-posinset`, `aria-setsize`, `aria-rowindex`, `aria-colindex`,
    * `aria-rowcount`, and `aria-colcount` (positive integers). Any other

@@ -71,7 +71,11 @@ where
     if let Some(placeholder) = string_prop(props, "aria-placeholder") {
         el = el.aria_placeholder(placeholder);
     }
-    if let Some(toggled) = toggled_prop(props, "aria-pressed") {
+    // AccessKit has one toggled state for both: checkboxes report it as
+    // checked, toggle buttons as pressed.
+    if let Some(toggled) =
+        toggled_prop(props, "aria-checked").or_else(|| toggled_prop(props, "aria-pressed"))
+    {
         el = el.aria_toggled(toggled);
     }
     if let Some(orientation) = orientation_prop(props, "aria-orientation") {
@@ -181,7 +185,7 @@ fn number_prop(props: &HashMap<String, serde_json::Value>, key: &str) -> Option<
         .filter(|value| value.is_finite())
 }
 
-/// `aria-pressed` is tri-state: a boolean, or the string `"mixed"`.
+/// `aria-checked` and `aria-pressed` are tri-state: a boolean, or `"mixed"`.
 fn toggled_prop(props: &HashMap<String, serde_json::Value>, key: &str) -> Option<Toggled> {
     match props.get(key)? {
         serde_json::Value::Bool(true) => Some(Toggled::True),

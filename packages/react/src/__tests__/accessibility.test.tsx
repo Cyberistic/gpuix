@@ -135,7 +135,7 @@ describeNative("accessibility", () => {
     )
   })
 
-  it("passes aria-keyshortcuts, aria-placeholder, aria-pressed, and aria-orientation", () => {
+  it("passes aria-keyshortcuts, aria-placeholder, aria-checked, aria-pressed, and aria-orientation", () => {
     testRoot.render(
       <div style={{ width: 320, height: 200 }}>
         <div
@@ -155,6 +155,12 @@ describeNative("accessibility", () => {
           role="button"
           aria-label="Partial"
           aria-pressed="mixed"
+          style={{ width: 120, height: 24 }}
+        />
+        <div
+          role="checkbox"
+          aria-label="Select all"
+          aria-checked="mixed"
           style={{ width: 120, height: 24 }}
         />
         <div
@@ -181,6 +187,7 @@ describeNative("accessibility", () => {
     )
     expect(byLabel("Unpressed")?.toggled).toBe("False")
     expect(byLabel("Partial")?.toggled).toBe("Mixed")
+    expect(withRole(tree, "CheckBox")[0]?.toggled).toBe("Mixed")
     expect(withRole(tree, "TextInput")[0]?.placeholder).toBe("Search notes")
     expect(withRole(tree, "TabList")[0]?.orientation).toBe("Vertical")
   })
