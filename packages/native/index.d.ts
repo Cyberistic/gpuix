@@ -106,6 +106,25 @@ export declare class GpuixRenderer {
   /** Enter or exit native fullscreen. */
   toggleFullscreen(): void
   setWindowTitle(title: string): void
+  /**
+   * Post an OS notification. A tag that matches an earlier one replaces it
+   * where the platform supports it; delivery being unavailable is a no-op.
+   */
+  notify(options: NotificationOptions): void
+  /** Remove the delivered or pending notification with this tag. */
+  dismissNotification(tag: string): void
+  /**
+   * Set the identity the OS attributes notifications to.
+   *
+   * Windows drops toasts without an AppUserModelID; this is the only entry
+   * point for it (`WindowOptions.appId` is the Wayland/X11 window class).
+   */
+  setAppIdentity(identifier: string, name: string): void
+  /**
+   * Call `callback` when the reader clicks a notification or one of its
+   * actions. A later call replaces the handler.
+   */
+  onNotificationResponse(callback: (response: NotificationResponse) => void): void
   /** Open the platform path picker. Returns null when the user cancels. */
   promptForPaths(options?: PathPromptOptions | undefined | null): Promise<Array<string> | null>
   focusElement(elementId: number): void
@@ -194,21 +213,7 @@ export declare class GpuixRenderer {
    * assert on `highlight` without a screenshot.
    */
   getPaintedHighlights(): Array<HighlightMatch>
-  /**
-   * Simulate space-separated keystrokes through the focused element's input pipeline.
-   * Post an OS notification. A tag that matches an earlier one replaces it
-   * where the platform supports it; delivery being unavailable is a no-op.
-   */
-  notify(options: NotificationOptions): void
-  /** Remove the delivered or pending notification with this tag. */
-  dismissNotification(tag: string): void
-  /**
-   * Set the identity the OS attributes notifications to.
-   *
-   * Windows drops toasts without an AppUserModelID; this is the only entry
-   * point for it (`WindowOptions.appId` is the Wayland/X11 window class).
-   */
-  setAppIdentity(identifier: string, name: string): void
+  /** Simulate space-separated keystrokes through the focused element's input pipeline. */
   simulateKeystrokes(keystrokes: string): void
   simulateKeyDown(keystroke: string, isHeld?: boolean | undefined | null): void
   simulateKeyUp(keystroke: string): void
