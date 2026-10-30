@@ -3062,6 +3062,20 @@ NAPI_RS_NATIVE_LIBRARY_PATH=./my-addon.node bun app.tsx
 `gpuix_native::gpui` is the GPUI the renderer uses. Take GPUI from there (or
 from the same checkout) or the element has no window to draw into.
 
+The addon crate is a `cdylib` with these dependencies, built with the
+`rust-toolchain.toml` from this repo (GPUI needs the same compiler):
+
+```toml
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gpuix-native = { git = "https://github.com/remorses/gpuix" }
+napi = "3"
+napi-derive = "3"
+serde_json = "1"
+```
+
 ```rust
 use gpuix_native::gpui;
 use gpuix_native::{

@@ -16,7 +16,7 @@ mod accessibility;
 mod app_menu;
 mod automation;
 mod color;
-pub mod custom_elements;
+mod custom_elements;
 mod diff;
 mod element_tree;
 mod markdown;
@@ -48,8 +48,6 @@ pub use element_tree::*;
 /// a second GPUI in the same addon cannot draw into GPUIX's window.
 pub use gpui;
 pub use renderer::*;
-/// How a custom element sends an event back to JS.
-pub use renderer::{emit_event_full, EventCallback};
 pub use style::*;
 
 #[cfg(any(

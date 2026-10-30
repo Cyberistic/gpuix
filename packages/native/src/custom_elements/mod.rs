@@ -13,14 +13,12 @@ use std::collections::{HashMap, HashSet};
 
 use crate::renderer::EventCallback;
 
-// Built-in adapters stay crate-private: the addon surface is the traits and
-// `register_custom_element`, not GPUIX's own element internals.
-pub(crate) mod anchored;
-pub(crate) mod code;
-pub(crate) mod diff;
-pub(crate) mod img;
-pub(crate) mod input;
-pub(crate) mod markdown;
+pub mod anchored;
+pub mod code;
+pub mod diff;
+pub mod img;
+pub mod input;
+pub mod markdown;
 
 // ── Render context ───────────────────────────────────────────────────
 
@@ -518,12 +516,6 @@ impl CustomElementRegistry {
         for id in ids {
             self.destroy(id);
         }
-    }
-}
-
-impl Default for CustomElementRegistry {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
