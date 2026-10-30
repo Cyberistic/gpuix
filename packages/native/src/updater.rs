@@ -898,7 +898,7 @@ mod packager {
             };
 
             let metadata = self.extract_path.metadata()?;
-            let previous_path = previous_bundle_path()?;
+            let previous_path = previous_bundle_path(&self.extract_path)?;
             replace_bundle(&self.extract_path, &previous_path)?;
 
             if let Err(err) = fs::write(&self.extract_path, bytes)
@@ -918,7 +918,7 @@ mod packager {
             use flate2::read::GzDecoder;
 
             let cursor = Cursor::new(bytes);
-            let previous_path = previous_bundle_path()?;
+            let previous_path = previous_bundle_path(&self.extract_path)?;
 
             let tmp_extract_dir = tempfile::Builder::new()
                 .prefix("packager_updated_app")
@@ -956,10 +956,8 @@ mod packager {
 
             if need_authorization {
                 log::debug!("app installation needs admin privileges");
-                let previous_dir = previous_path.parent().ok_or(Error::CacheDirUnavailable)?;
                 let apple_script = format!(
-                    "do shell script \"mkdir -p '{parent}' && rm -rf '{previous}' && mv -f '{src}' '{previous}' && (mv -f '{new}' '{src}' || mv -f '{previous}' '{src}')\" with administrator privileges",
-                    parent = previous_dir.display(),
+                    "do shell script \"rm -rf '{previous}' && mv -f '{src}' '{previous}' && (mv -f '{new}' '{src}' || mv -f '{previous}' '{src}')\" with administrator privileges",
                     previous = previous_path.display(),
                     src = self.extract_path.display(),
                     new = tmp_extract_dir.path().display()
@@ -1115,18 +1113,25 @@ mod packager {
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
     }
 
-    /// The bundle the last update replaced, kept for `rollbackUpdate()`.
+    /// Where the bundle the last update replaced is kept for `rollbackUpdate()`.
     ///
     /// A fixed path, not a temp dir: the process that installed the update
-    /// exits before anyone can roll back.
+    /// exits before anyone can roll back. Keyed by the bundle's file name, so
+    /// two apps never restore each other. The directory is created here, as
+    /// the user, so the admin install on macOS never leaves it root-owned.
     #[cfg_attr(windows, allow(dead_code))]
-    pub(super) fn previous_bundle_path() -> Result<PathBuf> {
-        let cache = cache_dir().ok_or(Error::CacheDirUnavailable)?;
-        Ok(cache
-            .join("gpuix")
-            .join("updater")
-            .join("previous")
-            .join("app"))
+    pub(super) fn previous_bundle_path(bundle: &Path) -> Result<PathBuf> {
+        previous_bundle_path_in(&cache_dir().ok_or(Error::CacheDirUnavailable)?, bundle)
+    }
+
+    #[cfg_attr(windows, allow(dead_code))]
+    pub(super) fn previous_bundle_path_in(cache: &Path, bundle: &Path) -> Result<PathBuf> {
+        let name = bundle.file_name().ok_or_else(|| {
+            std::io::Error::other(format!("{} has no file name", bundle.display()))
+        })?;
+        let slot = cache.join("gpuix").join("updater").join(name);
+        std::fs::create_dir_all(&slot)?;
+        Ok(slot.join("previous"))
     }
 
     /// Remove a file, symlink, or directory tree at `path`, if there is one.
@@ -1426,18 +1431,37 @@ pub fn check_update(
     })
 }
 
+// napi constructs this from rollback_update(); cargo test --lib does not.
+#[allow(dead_code)]
+pub struct RollbackTask;
+
+#[napi]
+impl Task for RollbackTask {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        rollback().map_err(updater_err)
+    }
+
+    fn resolve(&mut self, _env: Env, _output: Self::Output) -> Result<Self::JsValue> {
+        Ok(())
+    }
+}
+
 /// Put back the bundle the last update replaced.
 ///
 /// `downloadAndInstall()` keeps that bundle at
-/// `<cache>/gpuix/updater/previous/app`, a fixed path because the installing
-/// process exits. The restore consumes it, so a second call has nothing left
-/// to restore. Does not relaunch.
+/// `<cache>/gpuix/updater/<bundle name>/previous`, a fixed path because the
+/// installing process exits. The restore consumes it, so a second call has
+/// nothing left to restore. Does not relaunch.
 ///
 /// Windows installers run in their own process and cannot be reversed here, so
 /// this always fails there and asks for a reinstall of the previous version.
+#[allow(dead_code)]
 #[napi]
-pub fn rollback_update() -> Result<()> {
-    rollback().map_err(updater_err)
+pub fn rollback_update() -> AsyncTask<RollbackTask> {
+    AsyncTask::new(RollbackTask)
 }
 
 #[allow(dead_code)]
@@ -1448,15 +1472,15 @@ fn rollback() -> packager::Result<()> {
     }
     #[cfg(not(windows))]
     {
-        let previous = packager::previous_bundle_path()?;
         let current = packager::default_bundle_path()?;
+        let previous = packager::previous_bundle_path(&current)?;
         packager::rollback_previous(&previous, &current)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::packager::{replace_bundle, rollback_previous};
+    use super::packager::{previous_bundle_path_in, replace_bundle, rollback_previous};
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -1816,6 +1840,31 @@ mod tests {
 
         assert!(err.to_string().contains("no previous version"), "{err}");
         assert_eq!(std::fs::read_to_string(&current).unwrap(), "new");
+    }
+
+    // Regression: every app shared `<cache>/gpuix/updater/previous/app`, so
+    // rolling back one app restored whichever app updated last.
+    #[test]
+    fn rollback_never_restores_another_apps_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join("cache");
+        let notes = root.path().join("Applications/Notes.app");
+        let mail = root.path().join("Applications/Mail.app");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::create_dir_all(&mail).unwrap();
+        std::fs::write(notes.join("version"), "notes 1").unwrap();
+        std::fs::write(mail.join("version"), "mail 2").unwrap();
+
+        replace_bundle(&notes, &previous_bundle_path_in(&cache, &notes).unwrap()).unwrap();
+
+        let err = rollback_previous(&previous_bundle_path_in(&cache, &mail).unwrap(), &mail)
+            .err()
+            .expect("Mail has nothing to restore");
+        assert!(err.to_string().contains("no previous version"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(mail.join("version")).unwrap(),
+            "mail 2"
+        );
     }
 
     #[test]

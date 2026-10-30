@@ -736,14 +736,14 @@ export interface PathPromptOptions {
  * Put back the bundle the last update replaced.
  *
  * `downloadAndInstall()` keeps that bundle at
- * `<cache>/gpuix/updater/previous/app`, a fixed path because the installing
- * process exits. The restore consumes it, so a second call has nothing left
- * to restore. Does not relaunch.
+ * `<cache>/gpuix/updater/<bundle name>/previous`, a fixed path because the
+ * installing process exits. The restore consumes it, so a second call has
+ * nothing left to restore. Does not relaunch.
  *
  * Windows installers run in their own process and cannot be reversed here, so
  * this always fails there and asks for a reinstall of the previous version.
  */
-export declare function rollbackUpdate(): void
+export declare function rollbackUpdate(): Promise<void>
 
 /** One extra HTTP header on the feed or download request. */
 export interface UpdaterHeader {
