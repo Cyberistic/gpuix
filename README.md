@@ -1000,9 +1000,10 @@ function CopyButton({ text }: { text: string }) {
 The renderer methods behind it are `writeToClipboard(text)` and
 `readFromClipboard()`. A read returns the clipboard's text, or `null` when it
 holds no text at all: the clipboard is empty, or it holds an image or files.
-Both calls are **synchronous** on every desktop platform — GPUI reads the
-platform clipboard directly, so there is no promise to await and no UI thread
-to block. Reach them through `useGpuixRequired()` when a component needs to
+Both calls are **synchronous** on every desktop platform: GPUI reads the
+platform clipboard directly, so there is no promise to await. On Windows and
+Linux the call runs on the UI thread while JavaScript waits for the answer.
+Reach them through `useGpuixRequired()` when a component needs to
 read:
 
 ```tsx
@@ -4079,9 +4080,6 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
 ## Documentation
 
 See [AGENTS.md](https://github.com/remorses/gpuix/blob/main/AGENTS.md) for detailed architecture, communication flow, and contributing guide.
-
-[docs/gpuix-capabilities.md](./docs/gpuix-capabilities.md) lists the host
-capabilities each renderer supports, clipboard included.
 
 ## License
 
